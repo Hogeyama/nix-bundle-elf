@@ -8,18 +8,18 @@
     let
       supportedSystems = [ "x86_64-linux" ];
 
-      bundle-elf =
+      single-exe =
         # * usage:
-        #     bundle-elf {
+        #     single-exe {
         #       inherit pkgs;
         #       name = "foo";
         #       target = "${pkgs.foo}/bin/foo";
         #     }
         # * usage of the generated file:
-        #   * `result/$name --extract /path/to/dir` extracts the target
+        #   * `result --extract /path/to/dir` extracts the target
         #     and it's dependencies to `/path/to/dir`. It also creates a wrapper
         #     scripts `/path/to/dir/bin/$name` that runs the target.
-        #   * `result/$name [--] ARGS` extract the bundle to temporary directory
+        #   * `result [--] ARGS` extract the bundle to temporary directory
         #     and runs the target with `ARGS`.
         { name
         , target
@@ -87,7 +87,7 @@
               mkdir -p "\$TARGET/bin"
               cat - >"\$TARGET/bin/${name}" <<EOF2
             #!/usr/bin/env bash
-            exec "\$TARGET/lib/$interpreter" "\$TARGET/orig/${name}" "\\\$@"
+            exec "\$TARGET/lib/$interpreter" --argv0 "\\\$0" "\$TARGET/orig/${name}" "\\\$@"
             EOF2
               chmod +x "\$TARGET/bin/${name}"
               echo "successfully extracted to \$2"
@@ -96,13 +96,57 @@
                 shift
               fi
               unzip -qqd "\$TEMP" "\$TEMP/self.zip" >/dev/null
-              "\$TEMP/lib/$interpreter" "\$TEMP/orig/${name}" "\$@"
+              exec "\$TEMP/lib/$interpreter" --argv0 "\$0" "\$TEMP/orig/${name}" "\$@"
             fi
             exit 0
             #START_OF_ZIP#
             EOF
 
             mv $bundled $out
+          '';
+      aws-lambda-zip =
+        { name
+        , target
+        , pkgs
+        }:
+        pkgs.runCommandCC name { buildInputs = [ pkgs.patchelf pkgs.zip ]; }
+          ''
+            mkdir $out $out/lib
+            pushd $out
+
+            cp ${target} bootstrap
+
+            # get interpreter
+            interpreter=$(basename "$(patchelf --print-interpreter bootstrap)")
+
+            # copy & patchelf dynamic libraries
+            pushd lib
+            mapfile -t LIBS < <(ldd ../bootstrap | grep -F '=> /' | awk '{print $3}')
+            for lib in "''${LIBS[@]}"; do
+              cp "$lib" .
+              lib=$(basename "$lib")
+              if [[ "$lib" = "$interpreter" ]]; then
+                continue
+              fi
+              chmod +w $lib
+              patchelf --set-rpath '$ORIGIN' --force-rpath $lib
+              chmod -w $lib
+            done
+            popd #lib
+
+            # patchelf executable
+            chmod +w bootstrap
+            patchelf \
+              --set-interpreter ./lib/$interpreter \
+              --set-rpath ./lib \
+              --force-rpath \
+              bootstrap
+            chmod -w bootstrap
+
+            # zip
+            zip -qr function.zip .
+
+            rm -r lib bootstrap
           '';
     in
     flake-utils.lib.eachSystem supportedSystems (system:
@@ -111,14 +155,19 @@
       in
       {
         packages = {
-          example = self.lib.${system}.bundle-elf {
+          example-single-exe = self.lib.${system}.single-exe {
+            inherit pkgs;
+            name = "example";
+            target = "${pkgs.hello}/bin/hello";
+          };
+          example-lambda-zip = self.lib.${system}.aws-lambda-zip {
             inherit pkgs;
             name = "example";
             target = "${pkgs.hello}/bin/hello";
           };
         };
         lib = {
-          inherit bundle-elf;
+          inherit single-exe aws-lambda-zip;
         };
       }
     );
