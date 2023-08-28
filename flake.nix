@@ -69,7 +69,7 @@
             cat - bundle.zip > $bundled <<EOF
             #!/usr/bin/env bash
             set -eu
-            TEMP="\$(mktemp -d \''${TMPDIR:-/tmp}/${name}.XXXXXX)"
+            TEMP="\$(mktemp -d "\''${TMPDIR:-/tmp}"/${name}.XXXXXX)"
             trap 'rm -rf \$TEMP' EXIT
             N=\$(grep -an "^#START_OF_ZIP#" "\$0" | cut -d: -f1)
             tail -n +"\$((N + 1))" <"\$0" > "\$TEMP/self.zip"
