@@ -23,6 +23,7 @@
         #     and runs the target with `ARGS`.
         { name
         , target
+        , propagatedSignals ? [ "HUP" "INT" "QUIT" "PIPE" "TERM" "SIGUSR1" "SIGUSR2" ]
         , pkgs
         }:
         pkgs.runCommandCC name { buildInputs = [ pkgs.patchelf pkgs.zip ]; }
@@ -68,11 +69,11 @@
             chmod +x $bundled
             cat - bundle.zip > $bundled <<EOF
             #!/usr/bin/env bash
-            set -eu
+            set -u
             TEMP="\$(mktemp -d "\''${TMPDIR:-/tmp}"/${name}.XXXXXX)"
             trap 'rm -rf \$TEMP' EXIT
             N=\$(grep -an "^#START_OF_ZIP#" "\$0" | cut -d: -f1)
-            tail -n +"\$((N + 1))" <"\$0" > "\$TEMP/self.zip"
+            tail -n +"\$((N + 1))" <"\$0" > "\$TEMP/self.zip" || exit 1
             if [[ "\''${1:-}" == "--extract" ]]; then
               if [[ -z "\''${2:-}" ]]; then
                 echo "Usage: \$0 --extract <path>"
@@ -83,7 +84,7 @@
                 exit 1
               fi
               TARGET=\$(realpath "\$2")
-              unzip -qd "\$TARGET" "\$TEMP/self.zip"
+              unzip -qd "\$TARGET" "\$TEMP/self.zip" || exit 1
               mkdir -p "\$TARGET/bin"
               cat - >"\$TARGET/bin/${name}" <<EOF2
             #!/usr/bin/env bash
@@ -95,8 +96,20 @@
               if [[ "\''${1:-}" == "--" ]]; then
                 shift
               fi
-              unzip -qqd "\$TEMP" "\$TEMP/self.zip" >/dev/null
-              "\$TEMP/lib/$interpreter" --argv0 "\$0" "\$TEMP/orig/${name}" "\$@"
+              unzip -qqd "\$TEMP" "\$TEMP/self.zip" >/dev/null || exit 1
+
+              SIGNALS=(${builtins.concatStringsSep " " propagatedSignals})
+              for sig in "\''${SIGNALS[@]}"; do
+                trap "kill -\$sig \\\$PID; wait \\\$PID" \$sig
+              done
+              trap 'kill -TERM \$PID 1>/dev/null 2>&1; rm -rf \$TEMP' EXIT
+
+              "\$TEMP/lib/$interpreter" --argv0 "\$0" "\$TEMP/orig/${name}" "\$@" &
+              PID=\$!
+              wait \$PID
+
+              wait \$PID
+              exit \$?
             fi
             exit 0
             #START_OF_ZIP#
