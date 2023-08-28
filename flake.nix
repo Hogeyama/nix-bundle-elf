@@ -96,7 +96,7 @@
                 shift
               fi
               unzip -qqd "\$TEMP" "\$TEMP/self.zip" >/dev/null
-              exec "\$TEMP/lib/$interpreter" --argv0 "\$0" "\$TEMP/orig/${name}" "\$@"
+              "\$TEMP/lib/$interpreter" --argv0 "\$0" "\$TEMP/orig/${name}" "\$@"
             fi
             exit 0
             #START_OF_ZIP#
