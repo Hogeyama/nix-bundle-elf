@@ -43,14 +43,14 @@
             pushd lib
             mapfile -t LIBS < <(ldd ../orig/${name} | grep -F '=> /' | awk '{print $3}')
             for lib in "''${LIBS[@]}"; do
-              lib=$(basename "$lib")
-              if [[ "$(basename "$lib")" = "$interpreter_basename" ]]; then
+              lib_basename=$(basename "$lib")
+              if [[ "$lib_basename" = "$interpreter_basename" ]]; then
                 continue
               fi
               cp "$lib" .
-              chmod +w $lib
-              patchelf --set-rpath '$ORIGIN' --force-rpath $lib
-              chmod -w $lib
+              chmod +w $lib_basename
+              patchelf --set-rpath '$ORIGIN' --force-rpath $lib_basename
+              chmod -w $lib_basename
             done
             cp "$interpreter" .
             popd #lib
