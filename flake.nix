@@ -36,21 +36,23 @@
             cp ${target} orig/${name}
 
             # get interpreter
-            interpreter=$(basename "$(patchelf --print-interpreter orig/${name})")
+            interpreter=$(patchelf --print-interpreter orig/${name})
+            interpreter_basename=$(basename $interpreter)
 
             # copy & patchelf dynamic libraries
             pushd lib
             mapfile -t LIBS < <(ldd ../orig/${name} | grep -F '=> /' | awk '{print $3}')
             for lib in "''${LIBS[@]}"; do
-              cp "$lib" .
               lib=$(basename "$lib")
-              if [[ "$(basename "$lib")" = "$interpreter" ]]; then
+              if [[ "$(basename "$lib")" = "$interpreter_basename" ]]; then
                 continue
               fi
+              cp "$lib" .
               chmod +w $lib
               patchelf --set-rpath '$ORIGIN' --force-rpath $lib
               chmod -w $lib
             done
+            cp "$interpreter" .
             popd #lib
 
             # patchelf executable
@@ -87,7 +89,7 @@
               mkdir -p "\$TARGET/bin"
               cat - >"\$TARGET/bin/${name}" <<EOF2
             #!/usr/bin/env bash
-            exec "\$TARGET/lib/$interpreter" --argv0 "\\\$0" "\$TARGET/orig/${name}" "\\\$@"
+            exec "\$TARGET/lib/$interpreter_basename" --argv0 "\\\$0" "\$TARGET/orig/${name}" "\\\$@"
             EOF2
               chmod +x "\$TARGET/bin/${name}"
               echo "successfully extracted to \$2"
@@ -96,7 +98,7 @@
                 shift
               fi
               unzip -qqd "\$TEMP" "\$TEMP/self.zip" >/dev/null
-              "\$TEMP/lib/$interpreter" --argv0 "\$0" "\$TEMP/orig/${name}" "\$@"
+              "\$TEMP/lib/$interpreter_basename" --argv0 "\$0" "\$TEMP/orig/${name}" "\$@"
             fi
             exit 0
             #START_OF_ZIP#
