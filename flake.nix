@@ -27,83 +27,10 @@
         }:
         pkgs.runCommandCC name { buildInputs = [ pkgs.patchelf pkgs.zip ]; }
           ''
-            tmp=$(mktemp -d)
-            mkdir -p $tmp
-            pushd $tmp
-            mkdir orig lib
-
-            # copy target
-            cp ${target} orig/${name}
-
-            # get interpreter
-            interpreter=$(basename "$(patchelf --print-interpreter orig/${name})")
-
-            # copy & patchelf dynamic libraries
-            pushd lib
-            mapfile -t LIBS < <(ldd ../orig/${name} | grep -F '=> /' | awk '{print $3}')
-            for lib in "''${LIBS[@]}"; do
-              cp "$lib" .
-              lib=$(basename "$lib")
-              if [[ "$(basename "$lib")" = "$interpreter" ]]; then
-                continue
-              fi
-              chmod +w $lib
-              patchelf --set-rpath '$ORIGIN' --force-rpath $lib
-              chmod -w $lib
-            done
-            popd #lib
-
-            # patchelf executable
-            chmod +w orig/${name}
-            patchelf --set-rpath '$ORIGIN/../lib' --force-rpath orig/${name}
-            chmod -w orig/${name}
-
-            # zip
-            zip -qr bundle.zip .
-
-            # create single script that self-extracts and runs
-            # TODO is this posix-compliant?
-            bundled=${name}-bundled
-            touch $bundled
-            chmod +x $bundled
-            cat - bundle.zip > $bundled <<EOF
-            #!/usr/bin/env bash
-            set -eu
-            TEMP="\$(mktemp -d \''${TMPDIR:-/tmp}/${name}.XXXXXX)"
-            trap 'rm -rf \$TEMP' EXIT
-            N=\$(grep -an "^#START_OF_ZIP#" "\$0" | cut -d: -f1)
-            tail -n +"\$((N + 1))" <"\$0" > "\$TEMP/self.zip"
-            if [[ "\''${1:-}" == "--extract" ]]; then
-              if [[ -z "\''${2:-}" ]]; then
-                echo "Usage: \$0 --extract <path>"
-                exit 1
-              fi
-              if [[ -e "\$2" ]]; then
-                echo "Error: \$2 already exists"
-                exit 1
-              fi
-              TARGET=\$(realpath "\$2")
-              unzip -qd "\$TARGET" "\$TEMP/self.zip"
-              mkdir -p "\$TARGET/bin"
-              cat - >"\$TARGET/bin/${name}" <<EOF2
-            #!/usr/bin/env bash
-            exec "\$TARGET/lib/$interpreter" --argv0 "\\\$0" "\$TARGET/orig/${name}" "\\\$@"
-            EOF2
-              chmod +x "\$TARGET/bin/${name}"
-              echo "successfully extracted to \$2"
-            else
-              if [[ "\''${1:-}" == "--" ]]; then
-                shift
-              fi
-              unzip -qqd "\$TEMP" "\$TEMP/self.zip" >/dev/null
-              "\$TEMP/lib/$interpreter" --argv0 "\$0" "\$TEMP/orig/${name}" "\$@"
-            fi
-            exit 0
-            #START_OF_ZIP#
-            EOF
-
+            bundled=$(bash ${./bundle.bash} --format exe ${target} ${name})
             mv $bundled $out
           '';
+
       aws-lambda-zip =
         { name
         , target
@@ -111,42 +38,8 @@
         }:
         pkgs.runCommandCC name { buildInputs = [ pkgs.patchelf pkgs.zip ]; }
           ''
-            mkdir $out $out/lib
-            pushd $out
-
-            cp ${target} bootstrap
-
-            # get interpreter
-            interpreter=$(basename "$(patchelf --print-interpreter bootstrap)")
-
-            # copy & patchelf dynamic libraries
-            pushd lib
-            mapfile -t LIBS < <(ldd ../bootstrap | grep -F '=> /' | awk '{print $3}')
-            for lib in "''${LIBS[@]}"; do
-              cp "$lib" .
-              lib=$(basename "$lib")
-              if [[ "$lib" = "$interpreter" ]]; then
-                continue
-              fi
-              chmod +w $lib
-              patchelf --set-rpath '$ORIGIN' --force-rpath $lib
-              chmod -w $lib
-            done
-            popd #lib
-
-            # patchelf executable
-            chmod +w bootstrap
-            patchelf \
-              --set-interpreter ./lib/$interpreter \
-              --set-rpath ./lib \
-              --force-rpath \
-              bootstrap
-            chmod -w bootstrap
-
-            # zip
-            zip -qr function.zip .
-
-            rm -r lib bootstrap
+            bundled=$(bash ${./bundle.bash} --format lambda ${target} ${name})
+            mv $bundled $out
           '';
     in
     flake-utils.lib.eachSystem supportedSystems (system:
