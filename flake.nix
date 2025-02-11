@@ -51,7 +51,7 @@
           example-single-exe = self.lib.${system}.single-exe {
             inherit pkgs;
             name = "example";
-            target = "${pkgs.hello}/bin/hello";
+            target = "${pkgs.curl}/bin/curl";
           };
           example-lambda-zip = self.lib.${system}.aws-lambda-zip {
             inherit pkgs;

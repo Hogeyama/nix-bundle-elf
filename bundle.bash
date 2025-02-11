@@ -61,7 +61,57 @@ parse_args() {
 
 # gather shared libraries recursively
 function gather_deps() {
-	ldd "$1" | grep -F '=> /' | awk '{print $3}'
+	declare -A libs=()
+	local queue=("$1") interpreterb=$2
+
+	while [[ ${#queue[@]} -gt 0 ]]; do
+		local current="${queue[0]}"
+		queue=("${queue[@]:1}") # dequeue
+
+		# check if already visited
+		if [[ -n "${libs["$current"]:-}" ]]; then
+			continue
+		fi
+		libs["$current"]=1
+
+		mapfile -t needed < <(patchelf --print-needed "$current")
+		IFS=: read -ra runpaths < <(patchelf --print-rpath "$current")
+
+		for libname in "${needed[@]}"; do
+			# ignore interpreter
+			if [[ "$libname" == "$interpreterb" ]]; then
+				continue
+			fi
+
+			# identify the full path of the library
+			local found=""
+			for rp in "${runpaths[@]}"; do
+				if [[ -e "$rp/$libname" ]]; then
+					found="$rp/$libname"
+					break
+				fi
+			done
+
+			if [[ -z "$found" ]]; then
+				if [[ $libname =~ libc.so.* ]]; then
+					# probably bootstrap case
+					break
+				else
+					echo "Error: could not find library $libname needed by $current" >&2
+					exit 1
+				fi
+			fi
+
+			queue+=("$found")
+		done
+	done
+
+	# remove the original binary
+	unset 'libs[$1]'
+
+	for libfile in "${!libs[@]}"; do
+		printf "%s\n" "$libfile"
+	done
 }
 
 main() {
@@ -81,14 +131,13 @@ main() {
 	mapfile -t libs < <(gather_deps "${target}" "$interpreterb")
 
 	# copy interpreter
-	# copy and patchelf dynamic libraries
 	mkdir -p out/lib
+	cp "$interpreter" out/lib
+
+	# copy and patchelf dynamic libraries
 	for libfile in "${libs[@]}"; do
 		libb=$(basename "$libfile")
 		cp "$libfile" out/lib
-		if [[ "$libb" == "$interpreterb" ]]; then
-			continue
-		fi
 		chmod +w "out/lib/$libb"
 		patchelf --set-rpath \$ORIGIN --force-rpath "out/lib/$libb"
 		chmod -w "out/lib/$libb"
