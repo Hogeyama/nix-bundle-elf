@@ -113,18 +113,18 @@ bundle_exe() {
 	chmod -w "out/orig/${name}"
 
 	# archive
-	(cd "$tmpdir/out" && zip -qr bundle.zip .)
+	tar -C "$tmpdir/out" -czf "$tmpdir/bundle.tar.gz" .
 
 	# create self-extracting script
 	bundled="${name}"
 	touch "$bundled"
 	chmod +x "$bundled"
-	cat - "$tmpdir/out/bundle.zip" >"$bundled" <<-EOF
+	cat - "$tmpdir/bundle.tar.gz" >"$bundled" <<-EOF
 		#!/usr/bin/env bash
 		set -u
 		TEMP="\$(mktemp -d "\${TMPDIR:-/tmp}"/${name}.XXXXXX)"
-		N=\$(grep -an "^#START_OF_ZIP#" "\$0" | cut -d: -f1)
-		tail -n +"\$((N + 1))" <"\$0" > "\$TEMP/self.zip" || exit 1
+		N=\$(grep -an "^#START_OF_TAR#" "\$0" | cut -d: -f1)
+		tail -n +"\$((N + 1))" <"\$0" > "\$TEMP/self.tar.gz" || exit 1
 		if [[ "\${1:-}" == "--extract" ]]; then
 			# extract mode
 			if [[ -z "\${2:-}" ]]; then
@@ -137,7 +137,7 @@ bundle_exe() {
 			fi
 			TARGET=\$(realpath "\$2")
 			mkdir -p "\$TARGET"
-			unzip -qd "\$TARGET" "\$TEMP/self.zip" || exit 1
+			tar -C "\$TARGET" -xzf "\$TEMP/self.tar.gz" || exit 1
 			mkdir -p "\$TARGET/bin"
 			cat - >"\$TARGET/bin/${name}" <<-EOF2
 				#!/usr/bin/env bash
@@ -151,12 +151,12 @@ bundle_exe() {
 			if [[ "\${1:-}" == "--" ]]; then
 				shift
 			fi
-			unzip -qqd "\$TEMP" "\$TEMP/self.zip" || exit 1
+			tar -C "\$TEMP" -xzf "\$TEMP/self.tar.gz" || exit 1
 			trap 'rm -rf \$TEMP' EXIT
 			"\$TEMP/lib/$interpreterb" --argv0 "\$0" "\$TEMP/orig/${name}" "\$@"
 			exit \$?
 		fi
-		#START_OF_ZIP#
+		#START_OF_TAR#
 	EOF
 
 	if [[ -e "$OLDPWD/$bundled" ]]; then

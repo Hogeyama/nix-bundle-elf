@@ -25,7 +25,7 @@
         , target
         , pkgs
         }:
-        pkgs.runCommandCC name { buildInputs = [ pkgs.patchelf pkgs.zip ]; }
+        pkgs.runCommandCC name { buildInputs = [ pkgs.patchelf pkgs.gnutar ]; }
           ''
             bundled=$(bash ${./bundle.bash} --format exe ${target} ${name})
             mv $bundled $out
