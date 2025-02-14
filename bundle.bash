@@ -74,8 +74,10 @@ function gather_deps() {
 		fi
 		libs["$current"]=1
 
-		mapfile -t needed < <(patchelf --print-needed "$current")
-		IFS=: read -ra runpaths < <(patchelf --print-rpath "$current")
+		needed_s=$(patchelf --print-needed "$current")
+		mapfile -t needed <<<"$needed_s"
+		runpaths_s=$(patchelf --print-rpath "$current")
+		IFS=: read -ra runpaths <<<"$runpaths_s"
 
 		for libname in "${needed[@]}"; do
 			# ignore interpreter
@@ -128,7 +130,8 @@ main() {
 	interpreterb=$(basename "$interpreter")
 
 	# gather shared libraries
-	mapfile -t libs < <(gather_deps "${target}" "$interpreterb")
+	libs_s=$(gather_deps "${target}" "$interpreterb")
+	mapfile -t libs <<<"$libs_s"
 
 	# copy interpreter
 	mkdir -p out/lib
