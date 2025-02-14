@@ -62,6 +62,7 @@ parse_args() {
 # gather shared libraries recursively
 function gather_deps() {
 	declare -A libs=()
+	declare -a runpaths=()
 	local queue=("$1") interpreterb=$2
 
 	while [[ ${#queue[@]} -gt 0 ]]; do
@@ -77,7 +78,8 @@ function gather_deps() {
 		needed_s=$(patchelf --print-needed "$current")
 		mapfile -t needed <<<"$needed_s"
 		runpaths_s=$(patchelf --print-rpath "$current")
-		IFS=: read -ra runpaths <<<"$runpaths_s"
+		IFS=: read -ra cur_runpaths <<<"$runpaths_s"
+		runpaths+=("${cur_runpaths[@]}")
 
 		for libname in "${needed[@]}"; do
 			# ignore interpreter
