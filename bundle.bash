@@ -99,7 +99,7 @@ function gather_deps() {
 			if [[ -z "$found" ]]; then
 				if [[ $libname =~ libc.so.* ]]; then
 					# probably bootstrap case
-					break
+					continue
 				else
 					echo "Error: could not find library $libname needed by $current" >&2
 					exit 1
