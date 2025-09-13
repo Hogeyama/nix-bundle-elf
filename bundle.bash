@@ -144,7 +144,7 @@ main() {
 		libb=$(basename "$libfile")
 		cp "$libfile" out/lib
 		chmod +w "out/lib/$libb"
-		patchelf --set-rpath \$ORIGIN --force-rpath "out/lib/$libb"
+		patchelf --set-rpath \$ORIGIN "out/lib/$libb"
 		chmod -w "out/lib/$libb"
 	done
 
@@ -163,7 +163,7 @@ bundle_exe() {
 	mkdir -p out/orig
 	cp "${target}" out/orig/"${name}"
 	chmod +w "out/orig/${name}"
-	patchelf --set-rpath \$ORIGIN/../lib --force-rpath "out/orig/${name}"
+	patchelf --set-rpath \$ORIGIN/../lib "out/orig/${name}"
 	chmod -w "out/orig/${name}"
 
 	# archive
@@ -228,7 +228,6 @@ bundle_lambda() {
 	patchelf \
 		--set-interpreter "./lib/$interpreterb" \
 		--set-rpath ./lib \
-		--force-rpath \
 		out/bootstrap
 	chmod -w out/bootstrap
 
