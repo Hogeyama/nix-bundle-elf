@@ -27,8 +27,8 @@
         }:
         pkgs.runCommandCC name { buildInputs = [ pkgs.patchelf pkgs.gnutar ]; }
           ''
-            bundled=$(bash ${./bundle.bash} --format exe ${target} ${name})
-            mv $bundled $out
+            bundled=$(bash ${./bundle.bash} --format exe "${target}" "${name}")
+            mv "$bundled" "$out"
           '';
 
       aws-lambda-zip =
@@ -38,8 +38,8 @@
         }:
         pkgs.runCommandCC name { buildInputs = [ pkgs.patchelf pkgs.zip ]; }
           ''
-            bundled=$(bash ${./bundle.bash} --format lambda ${target} ${name})
-            mv $bundled $out
+            bundled=$(bash ${./bundle.bash} --format lambda "${target}" "${name}")
+            mv "$bundled" "$out"
           '';
     in
     flake-utils.lib.eachSystem supportedSystems (system:
