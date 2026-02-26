@@ -29,10 +29,31 @@ chmod +x /tmp/nix-installer
   --extra-conf "sandbox = false"
 ```
 
-## インストール後のPATH設定
+## インストール後のセットアップ
+
+### nix-daemon の起動
+
+`--init none` オプションを使用しているため、systemd が nix-daemon を管理しない。
+手動でバックグラウンド起動する必要がある。
 
 ```bash
+/nix/var/nix/profiles/default/bin/nix-daemon &
+```
+
+### nix コマンドの実行
+
+**重要**: `export PATH=...` はBashツールの呼び出しをまたいで引き継がれない。
+そのため、以降の nix コマンドはすべてフルパスで実行するか、各コマンドの先頭で再エクスポートする。
+
+フルパスで実行する場合:
+```bash
+/nix/var/nix/profiles/default/bin/nix flake check
+```
+
+再エクスポートして実行する場合:
+```bash
 export PATH="/nix/var/nix/profiles/default/bin:$PATH"
+nix flake check
 ```
 
 ## オプションの説明
