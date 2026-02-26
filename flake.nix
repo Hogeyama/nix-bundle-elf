@@ -27,8 +27,8 @@
         }:
         pkgs.runCommandCC name { buildInputs = [ pkgs.patchelf pkgs.gnutar ]; }
           ''
-            bundled=$(bash ${./bundle.bash} --format exe ${target} ${name})
-            mv $bundled $out
+            bundled=$(bash ${./bundle.bash} --format exe "${target}" "${name}")
+            mv "$bundled" "$out"
           '';
 
       aws-lambda-zip =
@@ -38,8 +38,8 @@
         }:
         pkgs.runCommandCC name { buildInputs = [ pkgs.patchelf pkgs.zip ]; }
           ''
-            bundled=$(bash ${./bundle.bash} --format lambda ${target} ${name})
-            mv $bundled $out
+            bundled=$(bash ${./bundle.bash} --format lambda "${target}" "${name}")
+            mv "$bundled" "$out"
           '';
     in
     flake-utils.lib.eachSystem supportedSystems (system:
@@ -132,9 +132,15 @@
               echo "$rpath" | grep -q '\$ORIGIN/../lib'
 
               # lib/ 内の各 .so の RUNPATH が $ORIGIN であること
+              # ld-linux (dynamic linker) は patchelf で変更すると壊れるためスキップ
               for lib in "$extractdir/lib/"*.so*; do
+                basename_lib=$(basename "$lib")
+                if [[ "$basename_lib" == ld-linux* ]]; then
+                  echo "$basename_lib: skipped (dynamic linker)"
+                  continue
+                fi
                 rpath=$(patchelf --print-rpath "$lib")
-                echo "$(basename "$lib") RPATH: $rpath"
+                echo "$basename_lib RPATH: $rpath"
                 echo "$rpath" | grep -q '\$ORIGIN'
               done
 

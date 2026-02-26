@@ -57,6 +57,23 @@ parse_args() {
 	if [[ -z "$name" ]]; then
 		name=$(basename "$target")
 	fi
+
+	# Sanitize name to prevent code injection and path traversal.
+	# Only allow alphanumeric characters, hyphens, underscores, and dots.
+	if [[ "$name" =~ [^a-zA-Z0-9._-] ]]; then
+		echo "Error: name contains invalid characters (only alphanumeric, '.', '-', '_' are allowed)" >&2
+		exit 1
+	fi
+	# Reject names starting with '-' to avoid option injection
+	if [[ "$name" == -* ]]; then
+		echo "Error: name must not start with '-'" >&2
+		exit 1
+	fi
+	# Reject names containing path traversal
+	if [[ "$name" == *..* ]]; then
+		echo "Error: name must not contain '..'" >&2
+		exit 1
+	fi
 }
 
 # gather shared libraries recursively
@@ -131,6 +148,12 @@ main() {
 	interpreter=$(patchelf --print-interpreter "${target}")
 	interpreterb=$(basename "$interpreter")
 
+	# Validate interpreter basename to prevent code injection via crafted ELF
+	if [[ "$interpreterb" =~ [^a-zA-Z0-9._-] ]]; then
+		echo "Error: interpreter name contains invalid characters: $interpreterb" >&2
+		exit 1
+	fi
+
 	# gather shared libraries
 	libs_s=$(gather_deps "${target}" "$interpreterb")
 	mapfile -t libs <<<"$libs_s"
@@ -175,8 +198,9 @@ bundle_exe() {
 	chmod +x "$bundled"
 	cat - "$tmpdir/bundle.tar.gz" >"$bundled" <<-EOF
 		#!/usr/bin/env bash
-		set -u
+		set -euo pipefail
 		TEMP="\$(mktemp -d "\${TMPDIR:-/tmp}"/${name}.XXXXXX)"
+		trap 'rm -rf "\$TEMP"' EXIT
 		N=\$(grep -an "^#START_OF_TAR#" "\$0" | cut -d: -f1)
 		tail -n +"\$((N + 1))" <"\$0" > "\$TEMP/self.tar.gz" || exit 1
 		if [[ "\${1:-}" == "--extract" ]]; then
@@ -206,18 +230,21 @@ bundle_exe() {
 				shift
 			fi
 			tar -C "\$TEMP" -xzf "\$TEMP/self.tar.gz" || exit 1
-			trap 'rm -rf \$TEMP' EXIT
 			"\$TEMP/lib/$interpreterb" --argv0 "\$0" "\$TEMP/orig/${name}" "\$@"
 			exit \$?
 		fi
 		#START_OF_TAR#
 	EOF
 
-	if [[ -e "$OLDPWD/$bundled" ]]; then
-		echo "Error: $bundled already exists" >&2
+	# Use mv -n (no-clobber) atomically to avoid TOCTOU race
+	if ! mv -n "$bundled" "$OLDPWD/$bundled"; then
+		echo "Error: failed to move $bundled to $OLDPWD" >&2
 		exit 1
 	fi
-	mv -n "$bundled" "$OLDPWD"
+	if [[ ! -e "$OLDPWD/$bundled" ]]; then
+		echo "Error: $bundled already exists in $OLDPWD" >&2
+		exit 1
+	fi
 	realpath "$OLDPWD/$bundled"
 }
 
@@ -234,11 +261,15 @@ bundle_lambda() {
 	# zip
 	(cd out && zip -qr function.zip .)
 
-	if [[ -e "$OLDPWD/function.zip" ]]; then
-		echo "Error: function.zip already exists" >&2
+	# Use mv -n (no-clobber) atomically to avoid TOCTOU race
+	if ! mv -n "$tmpdir/out/function.zip" "$OLDPWD/function.zip"; then
+		echo "Error: failed to move function.zip to $OLDPWD" >&2
 		exit 1
 	fi
-	mv -n "$tmpdir/out/function.zip" "$OLDPWD"
+	if [[ ! -e "$OLDPWD/function.zip" ]]; then
+		echo "Error: function.zip already exists in $OLDPWD" >&2
+		exit 1
+	fi
 	realpath "$OLDPWD/function.zip"
 }
 
