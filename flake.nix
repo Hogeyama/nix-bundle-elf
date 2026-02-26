@@ -132,9 +132,12 @@
               echo "$rpath" | grep -q '\$ORIGIN/../lib'
 
               # lib/ 内の各 .so の RUNPATH が $ORIGIN であること
+              # ただし ld-linux（インタープリタ）は除く
               for lib in "$extractdir/lib/"*.so*; do
+                libb=$(basename "$lib")
+                case "$libb" in ld-linux*) continue ;; esac
                 rpath=$(patchelf --print-rpath "$lib")
-                echo "$(basename "$lib") RPATH: $rpath"
+                echo "$libb RPATH: $rpath"
                 echo "$rpath" | grep -q '\$ORIGIN'
               done
 
