@@ -2,19 +2,23 @@
 
 Bundle a dynamically-linked ELF into a self-extracting, runnable single file.
 
-This project uses `patchelf` to collect the dynamic loader and shared libraries
-reachable via RPATH/RUNPATH, rewrites RUNPATHs to be relative, and assembles the
-result into a portable artifact.
+Two bundling strategies are available:
+
+- **rpath** (default): Rewrites RPATH with `patchelf --set-rpath`. Simple and fast.
+- **preload**: Uses `LD_PRELOAD` + `LD_LIBRARY_PATH` instead of rewriting RPATH.
+
+Both strategies support Nix-built binaries and foreign (non-Nix) binaries.
+Foreign binaries are auto-detected and their dependencies resolved via `nix-locate`.
 
 ## Demo
 
 ```bash
-# Example: build a self-extracting executable derivation
+# Build a self-extracting executable derivation
 nix build .#example-single-exe
 ./result -- --version
 ```
 
-## Usage
+## Flake Usage
 
 ```nix
 {
@@ -28,98 +32,120 @@ nix build .#example-single-exe
         pkgs = import nixpkgs { inherit system; };
         bundle = nix-bundle-elf.lib.${system};
       in {
-        packages.myapp-bundle = bundle.single-exe {
-          inherit pkgs;
-          name = "myapp";
-          target = "${pkgs.curl}/bin/curl";
+        packages = {
+          # rpath strategy (default)
+          myapp = bundle.single-exe {
+            inherit pkgs;
+            name = "myapp";
+            target = "${pkgs.curl}/bin/curl";
+          };
+
+          # preload strategy
+          myapp-preload = bundle.single-exe {
+            inherit pkgs;
+            name = "myapp";
+            target = "${pkgs.curl}/bin/curl";
+            type = "preload";
+          };
         };
       }
     );
 }
 ```
 
-- `lib.single-exe { pkgs; name; target; }`
-  - Builds a derivation that outputs a self-extracting executable named `name`.
-  - `target` is a path-like string to the binary (e.g., `${pkgs.foo}/bin/foo`).
+### `lib.single-exe { pkgs; name; target; type ? "rpath"; }`
 
-## Optional: CLI Usage
+Builds a derivation that outputs a self-extracting executable.
 
-For quick local testing without flakes:
+- `name`: Output binary name.
+- `target`: Path to the binary (e.g., `"${pkgs.foo}/bin/foo"`).
+- `type` (optional): `"rpath"` (default) or `"preload"`.
+
+### `lib.aws-lambda-zip { pkgs; name; target; }`
+
+Builds a Lambda-compatible zip with `bootstrap` and bundled libraries.
+
+## CLI Usage
+
+### bundle-rpath.bash
+
+Bundles using RPATH rewriting. Supports both Nix and foreign binaries.
 
 ```bash
-bash bundle-rpath.bash <target> --format exe [name]
+# Nix binary
+./bundle-rpath.bash /nix/store/...-curl-*/bin/curl -o ./curl-bundled
+
+# Foreign binary (auto-resolves deps via nix-locate)
+./bundle-rpath.bash ./some-foreign-binary -o ./my-app
+
+# Lambda zip
+./bundle-rpath.bash /nix/store/...-curl-*/bin/curl --format lambda -o ./function.zip
 ```
 
-- `target`: Path to the ELF binary to bundle.
-- `--format`: Output format. Use `exe`.
-- `name` (optional): Output name when `--format exe`. Defaults to `basename <target>`.
-- `--help`: Prints usage.
+### bundle-preload.bash
 
-Examples:
+Bundles using LD_PRELOAD instead of RPATH rewriting.
 
 ```bash
-# self-contained executable
-bash bundle-rpath.bash /nix/store/...-curl-*/bin/curl --format exe curl-bundled
-./curl-bundled -- --version
-
-# extract the payload to a directory instead of executing
-./curl-bundled --extract ./curl.bundle
-./curl.bundle/bin/curl --version
+./bundle-preload.bash ~/.local/bin/copilot -o ./copilot
 ```
 
-Notes for `exe` format:
-- Running the generated file will extract to a temporary directory and execute.
-- Use `--` to separate script flags from program flags: `./name -- --version`.
-- Use `--extract <dir>` to materialize the payload. A wrapper is written to
-  `<dir>/bin/<name>` that launches the original with the bundled loader/libs.
-
-### Overriding libraries
-
-You can override libraries by pointing `LD_LIBRARY_PATH` to
-directories containing replacement `.so` files.
-
-Examples:
+### Running the generated executable
 
 ```bash
-# Without extraction
-env LD_LIBRARY_PATH=/path/to/overrides ./myapp -- --version
+# Execute directly (extracts to temp dir)
+./my-app -- --version
 
-# After --extract
-./myapp --extract ./appdir
-LD_LIBRARY_PATH=/path/to/overrides ./appdir/bin/myapp -- --version
+# Extract permanently
+./my-app --extract ./my-app.bundle
+./my-app.bundle/bin/my-app --version
 ```
 
 ## How It Works
 
-- Detects the program interpreter with `patchelf --print-interpreter`.
-- Traverses dependencies via `patchelf --print-needed` and locates them using
-  RPATH/RUNPATH collected from visited objects (discovery only).
-- Copies the interpreter and all located libraries to `out/lib/` and rewrites
-  their RUNPATH to `$ORIGIN`.
-- Copies the original binary to `out/orig/<name>` and sets its RUNPATH to
-  `$ORIGIN/../lib`. The interpreter is set to a fixed-length placeholder string
-  whose byte offset is recorded at build time.
-- Creates a self-extracting script that appends a tarball of `out/` and, when
-  run, extracts to a temp dir, patches the interpreter placeholder with the
-  actual absolute path to the bundled `ld-linux`, and executes the binary
-  directly. Because the binary is executed directly (rather than via
-  `ld-linux --argv0`), `/proc/self/exe` correctly points to the program itself.
-  This is important for programs that rely on it, such as Node.js SEA (Single
-  Executable Applications).
+### rpath strategy (`bundle-rpath.bash`)
+
+1. Detects the interpreter with `patchelf --print-interpreter`.
+2. Traverses dependencies via `patchelf --print-needed` using RPATH/RUNPATH.
+   For foreign binaries, resolves dependencies via `nix-locate` first.
+3. Copies the interpreter and libraries to `lib/`, rewrites RUNPATH to `$ORIGIN`.
+4. Sets the binary's RPATH to `$ORIGIN/../lib` and interpreter to a placeholder.
+5. Creates a self-extracting script that patches the interpreter at runtime via `dd`.
+
+### preload strategy (`bundle-preload.bash`)
+
+1. Same dependency resolution as rpath.
+2. Copies libraries to `lib/`, rewrites their RUNPATH to `$ORIGIN`.
+3. Sets only the interpreter to a placeholder (no `--set-rpath` on the binary).
+4. Compiles `cleanup_env.so` for `LD_PRELOAD`, which:
+   - Saves and removes `LD_LIBRARY_PATH`/`LD_PRELOAD` from environ on startup.
+   - Restores them on self re-exec (Node.js SEA), strips them for child processes.
+5. Creates a self-extracting script. Each invocation copies the binary to a temp dir,
+   patches the interpreter copy via `dd`, and runs with `LD_LIBRARY_PATH` + `LD_PRELOAD`.
+
+Both strategies preserve `/proc/self/exe` by executing the binary directly
+(not via `ld-linux --argv0`).
+
+## Testing
+
+```bash
+# All tests (flake checks + foreign binary tests)
+nix develop -c just test
+```
 
 ## Requirements
 
 - Linux `x86_64` or `aarch64`.
 
-## Limitations & Tips
+## Limitations
 
-- Dependency discovery relies on embedded RPATH/RUNPATH of the target and its
-  libraries. System default search paths and `LD_LIBRARY_PATH` are not used at
-  bundle time. At runtime, `LD_LIBRARY_PATH` is honored.
-- Requires binaries that carry explicit RUNPATHs for reliable discovery during
-  bundling (typically Nix-built). Bundle time does not consult `LD_LIBRARY_PATH`
-  or default system paths like `/lib` or `/usr/lib`. Also, `$ORIGIN` entries in
-  RPATH/RUNPATH are not expanded during dependency discovery.
-- The produced artifact includes the glibc loader and shared libs from your build
-  environment. Portability across distros/hosts is good in many cases, but not
-  guaranteed if the target requires host facilities (e.g. NSS modules, CA certs).
+- **Node.js SEA**: SEA binaries depend on `argv[0]` matching the original
+  filename. The output file name (`-o`) must match the original binary name
+  (e.g., `-o ./copilot`, not `-o ./copilot-bundled`).
+- Dependency discovery for Nix binaries relies on RPATH/RUNPATH. `$ORIGIN`
+  entries are not expanded during discovery.
+- Foreign binary resolution requires a `nix-locate` database
+  (`~/.cache/nix-index/files`).
+- The produced artifact includes glibc and shared libs from your build
+  environment. Portability is good in many cases, but not guaranteed if
+  the target requires host facilities (e.g., NSS modules, CA certs).
