@@ -6,11 +6,12 @@ OLDPWD="$PWD"
 target="" # binary to bundle
 name=""   # name after bundling
 format=""
+use_global_interpreter=false
 parse_args() {
 	while (($# > 0)); do
 		case "$1" in
 		--help)
-			echo "Usage: $0 <target> --format <exe|lambda> [name]"
+			echo "Usage: $0 <target> --format <exe|lambda> [--use-global-interpreter] [name]"
 			exit 0
 			;;
 		--format)
@@ -24,6 +25,9 @@ parse_args() {
 			fi
 			format=$2
 			shift
+			;;
+		--use-global-interpreter)
+			use_global_interpreter=true
 			;;
 		*)
 			if [[ -z "$target" ]]; then
@@ -137,7 +141,9 @@ main() {
 
 	# copy interpreter
 	mkdir -p out/lib
-	cp "$interpreter" out/lib
+	if [[ "$use_global_interpreter" == false ]]; then
+		cp "$interpreter" out/lib
+	fi
 
 	# copy and patchelf dynamic libraries
 	for libfile in "${libs[@]}"; do
@@ -164,6 +170,9 @@ bundle_exe() {
 	cp "${target}" out/orig/"${name}"
 	chmod +w "out/orig/${name}"
 	patchelf --set-rpath \$ORIGIN/../lib "out/orig/${name}"
+	if [[ "$use_global_interpreter" == true ]]; then
+		patchelf --set-interpreter "$interpreter" "out/orig/${name}"
+	fi
 	chmod -w "out/orig/${name}"
 
 	# archive
@@ -173,45 +182,82 @@ bundle_exe() {
 	bundled="${name}"
 	touch "$bundled"
 	chmod +x "$bundled"
-	cat - "$tmpdir/bundle.tar.gz" >"$bundled" <<-EOF
-		#!/usr/bin/env bash
-		set -u
-		TEMP="\$(mktemp -d "\${TMPDIR:-/tmp}"/${name}.XXXXXX)"
-		N=\$(grep -an "^#START_OF_TAR#" "\$0" | cut -d: -f1)
-		tail -n +"\$((N + 1))" <"\$0" > "\$TEMP/self.tar.gz" || exit 1
-		if [[ "\${1:-}" == "--extract" ]]; then
-			# extract mode
-			if [[ -z "\${2:-}" ]]; then
-				echo "Usage: \$0 --extract <path>"
-				exit 1
+	if [[ "$use_global_interpreter" == true ]]; then
+		cat - "$tmpdir/bundle.tar.gz" >"$bundled" <<-EOF
+			#!/usr/bin/env bash
+			set -u
+			TEMP="\$(mktemp -d "\${TMPDIR:-/tmp}"/${name}.XXXXXX)"
+			N=\$(grep -an "^#START_OF_TAR#" "\$0" | cut -d: -f1)
+			tail -n +"\$((N + 1))" <"\$0" > "\$TEMP/self.tar.gz" || exit 1
+			if [[ "\${1:-}" == "--extract" ]]; then
+				# extract mode
+				if [[ -z "\${2:-}" ]]; then
+					echo "Usage: \$0 --extract <path>"
+					exit 1
+				fi
+				if [[ -e "\$2" ]]; then
+					echo "Error: \$2 already exists"
+					exit 1
+				fi
+				TARGET=\$(realpath "\$2")
+				mkdir -p "\$TARGET"
+				tar -C "\$TARGET" -xzf "\$TEMP/self.tar.gz" || exit 1
+				mkdir -p "\$TARGET/bin"
+				ln -s "\$TARGET/orig/${name}" "\$TARGET/bin/${name}"
+				echo "successfully extracted to \$2"
+				exit 0
+			else
+				# execute mode
+				if [[ "\${1:-}" == "--" ]]; then
+					shift
+				fi
+				tar -C "\$TEMP" -xzf "\$TEMP/self.tar.gz" || exit 1
+				trap 'rm -rf \$TEMP' EXIT
+				exec "\$TEMP/orig/${name}" "\$@"
 			fi
-			if [[ -e "\$2" ]]; then
-				echo "Error: \$2 already exists"
-				exit 1
+			#START_OF_TAR#
+		EOF
+	else
+		cat - "$tmpdir/bundle.tar.gz" >"$bundled" <<-EOF
+			#!/usr/bin/env bash
+			set -u
+			TEMP="\$(mktemp -d "\${TMPDIR:-/tmp}"/${name}.XXXXXX)"
+			N=\$(grep -an "^#START_OF_TAR#" "\$0" | cut -d: -f1)
+			tail -n +"\$((N + 1))" <"\$0" > "\$TEMP/self.tar.gz" || exit 1
+			if [[ "\${1:-}" == "--extract" ]]; then
+				# extract mode
+				if [[ -z "\${2:-}" ]]; then
+					echo "Usage: \$0 --extract <path>"
+					exit 1
+				fi
+				if [[ -e "\$2" ]]; then
+					echo "Error: \$2 already exists"
+					exit 1
+				fi
+				TARGET=\$(realpath "\$2")
+				mkdir -p "\$TARGET"
+				tar -C "\$TARGET" -xzf "\$TEMP/self.tar.gz" || exit 1
+				mkdir -p "\$TARGET/bin"
+				cat - >"\$TARGET/bin/${name}" <<-EOF2
+					#!/usr/bin/env bash
+					exec "\$TARGET/lib/$interpreterb" --argv0 "\\\$0" "\$TARGET/orig/${name}" "\\\$@"
+				EOF2
+				chmod +x "\$TARGET/bin/${name}"
+				echo "successfully extracted to \$2"
+				exit 0
+			else
+				# execute mode
+				if [[ "\${1:-}" == "--" ]]; then
+					shift
+				fi
+				tar -C "\$TEMP" -xzf "\$TEMP/self.tar.gz" || exit 1
+				trap 'rm -rf \$TEMP' EXIT
+				"\$TEMP/lib/$interpreterb" --argv0 "\$0" "\$TEMP/orig/${name}" "\$@"
+				exit \$?
 			fi
-			TARGET=\$(realpath "\$2")
-			mkdir -p "\$TARGET"
-			tar -C "\$TARGET" -xzf "\$TEMP/self.tar.gz" || exit 1
-			mkdir -p "\$TARGET/bin"
-			cat - >"\$TARGET/bin/${name}" <<-EOF2
-				#!/usr/bin/env bash
-				exec "\$TARGET/lib/$interpreterb" --argv0 "\\\$0" "\$TARGET/orig/${name}" "\\\$@"
-			EOF2
-			chmod +x "\$TARGET/bin/${name}"
-			echo "successfully extracted to \$2"
-			exit 0
-		else
-			# execute mode
-			if [[ "\${1:-}" == "--" ]]; then
-				shift
-			fi
-			tar -C "\$TEMP" -xzf "\$TEMP/self.tar.gz" || exit 1
-			trap 'rm -rf \$TEMP' EXIT
-			"\$TEMP/lib/$interpreterb" --argv0 "\$0" "\$TEMP/orig/${name}" "\$@"
-			exit \$?
-		fi
-		#START_OF_TAR#
-	EOF
+			#START_OF_TAR#
+		EOF
+	fi
 
 	if [[ -e "$OLDPWD/$bundled" ]]; then
 		echo "Error: $bundled already exists" >&2
@@ -225,10 +271,16 @@ bundle_lambda() {
 	# patchelf executable
 	cp "${target}" out/bootstrap
 	chmod +w out/bootstrap
-	patchelf \
-		--set-interpreter "./lib/$interpreterb" \
-		--set-rpath ./lib \
-		out/bootstrap
+	if [[ "$use_global_interpreter" == true ]]; then
+		patchelf \
+			--set-rpath ./lib \
+			out/bootstrap
+	else
+		patchelf \
+			--set-interpreter "./lib/$interpreterb" \
+			--set-rpath ./lib \
+			out/bootstrap
+	fi
 	chmod -w out/bootstrap
 
 	# zip
