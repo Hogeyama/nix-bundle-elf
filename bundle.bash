@@ -7,11 +7,12 @@ target="" # binary to bundle
 name=""   # name after bundling
 format=""
 use_global_interpreter=false
+use_system_glibc=false
 parse_args() {
 	while (($# > 0)); do
 		case "$1" in
 		--help)
-			echo "Usage: $0 <target> --format <exe|lambda> [--use-global-interpreter] [name]"
+			echo "Usage: $0 <target> --format <exe|lambda> [--use-global-interpreter] [--use-system-glibc] [name]"
 			exit 0
 			;;
 		--format)
@@ -28,6 +29,9 @@ parse_args() {
 			;;
 		--use-global-interpreter)
 			use_global_interpreter=true
+			;;
+		--use-system-glibc)
+			use_system_glibc=true
 			;;
 		*)
 			if [[ -z "$target" ]]; then
@@ -89,6 +93,14 @@ function gather_deps() {
 			# ignore interpreter
 			if [[ "$libname" == "$interpreterb" ]]; then
 				continue
+			fi
+
+			# When using system glibc, skip all glibc-family libs before RPATH lookup.
+			# These must come from the same glibc as the host ld-linux to avoid mixing.
+			if [[ "$use_system_glibc" == true ]]; then
+				if [[ $libname =~ libc\.so\..* ]] || [[ $libname =~ lib(m|dl|pthread|rt|nsl|resolv|util|crypt|nss_).*\.so\..* ]]; then
+					continue
+				fi
 			fi
 
 			# identify the full path of the library

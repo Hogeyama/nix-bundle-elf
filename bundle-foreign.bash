@@ -3,6 +3,15 @@ set -euo pipefail
 
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 
+TMPDIR_BUNDLE=""
+
+cleanup() {
+	if [[ -n "$TMPDIR_BUNDLE" ]]; then
+		rm -rf "$TMPDIR_BUNDLE"
+	fi
+}
+trap cleanup EXIT
+
 target=""
 name=""
 format=""
@@ -76,15 +85,19 @@ parse_args() {
 }
 
 # Build a nixpkgs package and print output paths.
-# Handles package names with output suffixes (e.g., "gcc-unwrapped.lib")
+# Handles package names with output suffixes (e.g., "libgcc.lib", "gccNGPackages_15.libstdcxx.out").
+# nix-alien returns names as "<attr-path>.<output>" where the last segment is the output name.
 build_package() {
 	local pkg=$1
 	local nixpkgs_ref=$2
 
-	if [[ "$pkg" == *.* ]]; then
-		local pkg_name="${pkg%%.*}"
-		local output="${pkg#*.}"
-		nix build "${nixpkgs_ref}#${pkg_name}^${output}" --no-link --print-out-paths
+	# Known Nix output names (last segment after final dot)
+	local known_outputs="out dev lib doc man bin static debug info headers"
+	local last_segment="${pkg##*.}"
+
+	if [[ "$pkg" == *.* ]] && [[ " ${known_outputs} " == *" ${last_segment} "* ]]; then
+		local attr_path="${pkg%.*}"
+		nix build "${nixpkgs_ref}#${attr_path}^${last_segment}" --no-link --print-out-paths
 	else
 		nix build "${nixpkgs_ref}#${pkg}" --no-link --print-out-paths
 	fi
@@ -93,11 +106,19 @@ build_package() {
 main() {
 	parse_args "$@"
 
-	# Get nixpkgs rev from flake.lock
-	local nixpkgs_rev
-	nixpkgs_rev=$(jq -r '.nodes.nixpkgs.locked.rev' "$SCRIPT_DIR/flake.lock")
-	local nixpkgs_ref="github:NixOS/nixpkgs/${nixpkgs_rev}"
-	echo "Using nixpkgs: ${nixpkgs_ref}" >&2
+	# Use the user's nixpkgs (flake registry) for lib resolution.
+	# nix-alien-find-libs returns package names from the user's nix-index, which is
+	# indexed against their current nixpkgs -- not necessarily the pinned flake.lock rev.
+	local nixpkgs_ref="nixpkgs"
+	echo "Using nixpkgs: ${nixpkgs_ref} (from flake registry)" >&2
+
+	# Ensure patchelf is available (may not be on non-NixOS systems)
+	if ! command -v patchelf &>/dev/null; then
+		local patchelf_path
+		patchelf_path=$(nix build "${nixpkgs_ref}#patchelf" --no-link --print-out-paths 2>/dev/null)
+		export PATH="${patchelf_path}/bin:${PATH}"
+		echo "Using patchelf from Nix store: ${patchelf_path}/bin/patchelf" >&2
+	fi
 
 	# Run nix-alien-find-libs
 	local alien_args=(--json)
@@ -110,12 +131,16 @@ main() {
 	local libs_json
 	libs_json=$(nix run "github:thiagokokada/nix-alien#nix-alien-find-libs" -- "${alien_args[@]}")
 
-	# Extract unique package names (filter out null/unfound libs)
+	# Extract unique package names (filter out null/unfound libs).
+	# Always include glibc (libdl, libm, libpthread, libc) and gcc-unwrapped^lib
+	# (libgcc_s.so.1) as baseline C/C++ runtime packages -- nix-alien-find-libs
+	# often omits these because they appear in nix-index as system-level libs.
 	local -a packages
 	mapfile -t packages < <(echo "$libs_json" | jq -r '
 		to_entries
 		| map(select(.value != null))
 		| map(.value)
+		| . + ["gcc-unwrapped^lib"]
 		| unique
 		| .[]
 	')
@@ -166,20 +191,19 @@ main() {
 	rpath=$(IFS=:; echo "${lib_dirs[*]}")
 
 	# Patch a copy of the binary with Nix store RPATHs
-	local tmpdir
-	tmpdir=$(mktemp -d)
-	trap 'rm -rf "$tmpdir"' EXIT
+	TMPDIR_BUNDLE=$(mktemp -d)
 
-	cp "$target" "$tmpdir/${name}"
-	chmod +w "$tmpdir/${name}"
-	patchelf --set-rpath "$rpath" "$tmpdir/${name}"
+	cp "$target" "$TMPDIR_BUNDLE/${name}"
+	chmod +w "$TMPDIR_BUNDLE/${name}"
+	patchelf --set-rpath "$rpath" "$TMPDIR_BUNDLE/${name}"
 
 	echo "Calling bundle.bash..." >&2
 
 	bash "$SCRIPT_DIR/bundle.bash" \
-		"$tmpdir/${name}" \
+		"$TMPDIR_BUNDLE/${name}" \
 		--format "$format" \
 		--use-global-interpreter \
+		--use-system-glibc \
 		"$name"
 }
 
