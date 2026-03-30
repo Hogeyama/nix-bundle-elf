@@ -82,6 +82,10 @@ function gather_deps() {
 		runpaths+=("${cur_runpaths[@]}")
 
 		for libname in "${needed[@]}"; do
+			# skip empty entries (e.g. when patchelf --print-needed returns nothing)
+			if [[ -z "$libname" ]]; then
+				continue
+			fi
 			# ignore interpreter
 			if [[ "$libname" == "$interpreterb" ]]; then
 				continue
