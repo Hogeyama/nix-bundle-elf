@@ -104,8 +104,11 @@ LD_LIBRARY_PATH=/path/to/overrides ./appdir/bin/myapp -- --version
   actual absolute path to the bundled `ld-linux`, and executes the binary
   directly. Because the binary is executed directly (rather than via
   `ld-linux --argv0`), `/proc/self/exe` correctly points to the program itself.
-  This is important for programs that rely on it, such as Node.js SEA (Single
-  Executable Applications).
+  This is important for programs that rely on it, such as Go binaries and
+  Rust's `std::env::current_exe()`. Note that Node.js SEA (Single Executable
+  Applications) may still break because patchelf's `--set-rpath` can corrupt
+  the NOTE segments that postject uses to embed the SEA blob
+  (see [patchelf#560](https://github.com/NixOS/patchelf/issues/560)).
 
 ## Requirements
 
