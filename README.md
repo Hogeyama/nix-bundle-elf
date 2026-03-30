@@ -89,6 +89,41 @@ env LD_LIBRARY_PATH=/path/to/overrides ./myapp -- --version
 LD_LIBRARY_PATH=/path/to/overrides ./appdir/bin/myapp -- --version
 ```
 
+## Bundling Non-Nix Binaries
+
+`bundle-foreign.bash` can bundle arbitrary (non-Nix) ELF binaries by using
+[nix-alien-find-libs](https://github.com/thiagokokada/nix-alien) to discover
+which nixpkgs packages provide the required shared libraries.
+
+```bash
+bash bundle-foreign.bash <target> --format exe [--auto] [name]
+```
+
+- `target`: Path to any ELF binary (does not need to be Nix-built).
+- `--format`: Output format (`exe` or `lambda`).
+- `--auto`: Auto-select library candidates (non-interactive). Without this,
+  `nix-alien-find-libs` uses `fzf` to let you choose when multiple packages
+  provide the same library.
+- `name` (optional): Output name. Defaults to `basename <target>`.
+
+Prerequisites: `nix`, `patchelf`, `jq`, and a
+[nix-index](https://github.com/nix-community/nix-index) database.
+
+Example:
+
+```bash
+# Bundle a downloaded binary (interactive candidate selection)
+bash bundle-foreign.bash ./some-downloaded-app --format exe
+
+# Fully automated (auto-selects first candidate for each library)
+bash bundle-foreign.bash ./some-downloaded-app --format exe --auto my-app
+```
+
+Note: This uses `--use-global-interpreter` internally — the bundled binary
+relies on the host's dynamic linker (`ld-linux`), while all other shared
+libraries are bundled. This avoids issues with programs that re-exec
+themselves via `/proc/self/exe` (e.g., Node.js-based tools).
+
 ## How It Works
 
 - Detects the program interpreter with `patchelf --print-interpreter`.
