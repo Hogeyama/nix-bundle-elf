@@ -6,6 +6,8 @@ OLDPWD="$PWD"
 target="" # binary to bundle
 name=""   # name after bundling
 format=""
+INTERP_PLACEHOLDER_LEN=256
+INTERP_PLACEHOLDER_TAG="NIXBUNDLEELF_INTERP_PLACEHOLDER"
 parse_args() {
 	while (($# > 0)); do
 		case "$1" in
@@ -167,7 +169,30 @@ bundle_exe() {
 	mkdir -p out/orig
 	cp "${target}" out/orig/"${name}"
 	chmod +w "out/orig/${name}"
-	patchelf --set-rpath \$ORIGIN/../lib "out/orig/${name}"
+	# Set RPATH to relative path and interpreter to a placeholder.
+	# The placeholder will be replaced with the actual absolute path at
+	# extraction time, allowing the binary to be executed directly (not via
+	# ld-linux). This preserves /proc/self/exe, which programs like Node.js
+	# SEA rely on.
+	local placeholder="/${INTERP_PLACEHOLDER_TAG}"
+	while [[ ${#placeholder} -lt $INTERP_PLACEHOLDER_LEN ]]; do placeholder="${placeholder}/"; done
+	placeholder="${placeholder:0:$INTERP_PLACEHOLDER_LEN}"
+	patchelf \
+		--set-interpreter "$placeholder" \
+		--set-rpath \$ORIGIN/../lib \
+		"out/orig/${name}"
+	# Record the byte offset of the placeholder in the binary. This avoids
+	# needing to search at runtime, eliminating any risk of matching a stray
+	# occurrence elsewhere in the binary.
+	local match_count
+	match_count=$(grep -c "$INTERP_PLACEHOLDER_TAG" "out/orig/${name}" || true)
+	if [[ "$match_count" -ne 1 ]]; then
+		echo "Error: interpreter placeholder found $match_count times (expected 1)" >&2
+		exit 1
+	fi
+	local interp_offset
+	interp_offset=$(grep -boa "$INTERP_PLACEHOLDER_TAG" "out/orig/${name}" | head -1 | cut -d: -f1)
+	interp_offset=$((interp_offset - 1)) # account for leading "/"
 	chmod -w "out/orig/${name}"
 
 	# archive
@@ -183,6 +208,22 @@ bundle_exe() {
 		TEMP="\$(mktemp -d "\${TMPDIR:-/tmp}"/${name}.XXXXXX)"
 		N=\$(grep -an "^#START_OF_TAR#" "\$0" | cut -d: -f1)
 		tail -n +"\$((N + 1))" <"\$0" > "\$TEMP/self.tar.gz" || exit 1
+		# Patch the interpreter placeholder in the binary with the actual
+		# absolute path to the bundled ld-linux. The byte offset was
+		# determined at bundle time to avoid runtime binary searching.
+		patch_interp() {
+			local binary="\$1" real_interp="\$2"
+			if [[ \${#real_interp} -ge ${INTERP_PLACEHOLDER_LEN} ]]; then
+				echo "Error: interpreter path too long (\${#real_interp} >= ${INTERP_PLACEHOLDER_LEN})" >&2
+				return 1
+			fi
+			chmod +w "\$binary"
+			{
+				printf '%s' "\$real_interp"
+				dd if=/dev/zero bs=1 count=\$((${INTERP_PLACEHOLDER_LEN} - \${#real_interp})) 2>/dev/null
+			} | dd of="\$binary" bs=1 seek=${interp_offset} count=${INTERP_PLACEHOLDER_LEN} conv=notrunc 2>/dev/null
+			chmod -w "\$binary"
+		}
 		if [[ "\${1:-}" == "--extract" ]]; then
 			# extract mode
 			if [[ -z "\${2:-}" ]]; then
@@ -196,10 +237,11 @@ bundle_exe() {
 			TARGET=\$(realpath "\$2")
 			mkdir -p "\$TARGET"
 			tar -C "\$TARGET" -xzf "\$TEMP/self.tar.gz" || exit 1
+			patch_interp "\$TARGET/orig/${name}" "\$TARGET/lib/${interpreterb}"
 			mkdir -p "\$TARGET/bin"
 			cat - >"\$TARGET/bin/${name}" <<-EOF2
 				#!/usr/bin/env bash
-				exec "\$TARGET/lib/$interpreterb" --argv0 "\\\$0" "\$TARGET/orig/${name}" "\\\$@"
+				exec "\$TARGET/orig/${name}" "\\\$@"
 			EOF2
 			chmod +x "\$TARGET/bin/${name}"
 			echo "successfully extracted to \$2"
@@ -211,7 +253,8 @@ bundle_exe() {
 			fi
 			tar -C "\$TEMP" -xzf "\$TEMP/self.tar.gz" || exit 1
 			trap 'rm -rf \$TEMP' EXIT
-			"\$TEMP/lib/$interpreterb" --argv0 "\$0" "\$TEMP/orig/${name}" "\$@"
+			patch_interp "\$TEMP/orig/${name}" "\$TEMP/lib/${interpreterb}"
+			"\$TEMP/orig/${name}" "\$@"
 			exit \$?
 		fi
 		#START_OF_TAR#

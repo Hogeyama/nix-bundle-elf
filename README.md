@@ -97,9 +97,15 @@ LD_LIBRARY_PATH=/path/to/overrides ./appdir/bin/myapp -- --version
 - Copies the interpreter and all located libraries to `out/lib/` and rewrites
   their RUNPATH to `$ORIGIN`.
 - Copies the original binary to `out/orig/<name>` and sets its RUNPATH to
-  `$ORIGIN/../lib`.
+  `$ORIGIN/../lib`. The interpreter is set to a fixed-length placeholder string
+  whose byte offset is recorded at build time.
 - Creates a self-extracting script that appends a tarball of `out/` and, when
-  run, extracts to a temp dir and executes via the bundled interpreter.
+  run, extracts to a temp dir, patches the interpreter placeholder with the
+  actual absolute path to the bundled `ld-linux`, and executes the binary
+  directly. Because the binary is executed directly (rather than via
+  `ld-linux --argv0`), `/proc/self/exe` correctly points to the program itself.
+  This is important for programs that rely on it, such as Node.js SEA (Single
+  Executable Applications).
 
 ## Requirements
 
