@@ -24,6 +24,8 @@ usage() {
 		  -o, --output <path>      Output file (default: ./<basename of input>)
 		  --format <exe|lambda>    Output format (default: exe)
 		  --no-nix-locate          Disable nix-locate (error if binary is foreign)
+		  --include <src>:<dest>   Include a file in the bundle (repeatable)
+		  --add-flag <arg>         Add a runtime argument before user args
 		  -h, --help               Show this help
 	EOF
 	exit 1
@@ -33,6 +35,8 @@ target=""
 output=""
 format=""
 use_nix_locate=true
+add_flags=()
+includes=()
 
 parse_args() {
 	while (($# > 0)); do
@@ -56,6 +60,14 @@ parse_args() {
 			;;
 		--no-nix-locate)
 			use_nix_locate=false
+			;;
+		--add-flag)
+			add_flags+=("${2:?--add-flag requires an argument}")
+			shift
+			;;
+		--include)
+			includes+=("${2:?--include requires an argument}")
+			shift
 			;;
 		-*)
 			echo "Error: unknown option: $1" >&2
@@ -161,6 +173,23 @@ patch_foreign() {
 
 source "$SCRIPT_DIR/lib/gather-nix-deps.bash"
 
+# Generate shell code that initializes an ADD_FLAGS array with %ROOT replaced
+# by the given variable name (e.g. "TEMP" or "TARGET").
+serialize_add_flags() {
+	local root_var="$1"
+	echo 'ADD_FLAGS=()'
+	for flag in "${add_flags[@]}"; do
+		local expanded="$flag"
+		# 1. %% → sentinel (\x01) に退避
+		expanded="${expanded//%%/$'\x01'}"
+		# 2. %ROOT → 実際の変数参照に置換
+		expanded="${expanded//%ROOT/\$${root_var}}"
+		# 3. sentinel → % に復元
+		expanded="${expanded//$'\x01'/%}"
+		printf 'ADD_FLAGS+=(%s)\n' "${expanded@Q}"
+	done
+}
+
 main() {
 	parse_args "$@"
 
@@ -203,11 +232,22 @@ main() {
 		chmod -w "out/lib/$libb"
 	done
 
+	# copy --include files into bundle
+	for inc in "${includes[@]}"; do
+		local src="${inc%%:*}" dest="${inc#*:}"
+		mkdir -p "out/$(dirname "$dest")"
+		cp "$src" "out/$dest"
+	done
+
 	case "$format" in
 	exe)
 		bundle_exe
 		;;
 	lambda)
+		if [[ ${#add_flags[@]} -gt 0 ]]; then
+			echo "Error: --add-flag is not supported with lambda format" >&2
+			exit 1
+		fi
 		bundle_lambda
 		;;
 	esac
@@ -247,6 +287,11 @@ bundle_exe() {
 	# archive
 	tar -C "$tmpdir/out" -czf "$tmpdir/bundle.tar.gz" .
 
+	# serialize add_flags for embedding in heredoc
+	local add_flags_exec add_flags_extract
+	add_flags_exec=$(serialize_add_flags TEMP)
+	add_flags_extract=$(serialize_add_flags TARGET)
+
 	# create self-extracting script
 	cat - "$tmpdir/bundle.tar.gz" >"$output" <<-EOF
 		#!/usr/bin/env bash
@@ -284,10 +329,12 @@ bundle_exe() {
 			mkdir -p "\$TARGET"
 			tar -C "\$TARGET" -xzf "\$TEMP/self.tar.gz" || exit 1
 			patch_interp "\$TARGET/orig/${name}" "\$TARGET/lib/${interpreterb}"
+			${add_flags_extract}
 			mkdir -p "\$TARGET/bin"
 			cat - >"\$TARGET/bin/${name}" <<-EOF2
 				#!/usr/bin/env bash
-				exec "\$TARGET/orig/${name}" "\\\$@"
+				${add_flags_extract}
+				exec "\$TARGET/orig/${name}" "\${ADD_FLAGS[@]}" "\\\$@"
 			EOF2
 			chmod +x "\$TARGET/bin/${name}"
 			echo "successfully extracted to \$2"
@@ -300,7 +347,8 @@ bundle_exe() {
 			tar -C "\$TEMP" -xzf "\$TEMP/self.tar.gz" || exit 1
 			trap 'rm -rf \$TEMP' EXIT
 			patch_interp "\$TEMP/orig/${name}" "\$TEMP/lib/${interpreterb}"
-			"\$TEMP/orig/${name}" "\$@"
+			${add_flags_exec}
+			"\$TEMP/orig/${name}" "\${ADD_FLAGS[@]}" "\$@"
 			exit \$?
 		fi
 		#START_OF_TAR#

@@ -46,6 +46,8 @@ usage() {
 		Options:
 		  -o, --output <path>      Output file (default: ./<basename of input>)
 		  --no-nix-locate          Disable nix-locate (error if binary is foreign)
+		  --include <src>:<dest>   Include a file in the bundle (repeatable)
+		  --add-flag <arg>         Add a runtime argument before user args
 		  -h, --help               Show this help
 	EOF
 	exit 1
@@ -56,6 +58,8 @@ usage() {
 target=""
 output=""
 use_nix_locate=true
+add_flags=()
+includes=()
 
 while (($# > 0)); do
 	case "$1" in
@@ -65,6 +69,14 @@ while (($# > 0)); do
 		shift
 		;;
 	--no-nix-locate) use_nix_locate=false ;;
+	--add-flag)
+		add_flags+=("${2:?--add-flag requires an argument}")
+		shift
+		;;
+	--include)
+		includes+=("${2:?--include requires an argument}")
+		shift
+		;;
 	-*)
 		echo "Error: unknown option: $1" >&2
 		exit 1
@@ -189,6 +201,60 @@ else
 	done
 fi
 
+# --- serialize_add_flags ---
+
+# Generate shell code that initializes an ADD_FLAGS array with %ROOT replaced
+# by the given variable name (e.g. "TEMP" or "TARGET").
+serialize_add_flags() {
+	local root_var="$1"
+	echo 'ADD_FLAGS=()'
+	for flag in "${add_flags[@]}"; do
+		local expanded="$flag"
+		# 1. %% → sentinel (\x01) に退避
+		expanded="${expanded//%%/$'\x01'}"
+		# 2. %ROOT → 実際の変数参照に置換
+		expanded="${expanded//%ROOT/\$${root_var}}"
+		# 3. sentinel → % に復元
+		expanded="${expanded//$'\x01'/%}"
+		printf 'ADD_FLAGS+=(%s)\n' "${expanded@Q}"
+	done
+}
+
+quote_sh_literal() {
+	local value="$1"
+	printf "'%s'" "${value//\'/\'\\\'\'}"
+}
+
+serialize_add_flag_words_sh() {
+	local root_expr="$1"
+	local flag expanded prefix suffix expr out=""
+	for flag in "${add_flags[@]}"; do
+		expanded="${flag//%%/$'\x01'}"
+		expr=""
+		while [[ "$expanded" == *%ROOT* ]]; do
+			prefix="${expanded%%\%ROOT*}"
+			prefix="${prefix//$'\x01'/%}"
+			if [[ -n "$prefix" ]]; then
+				expr+="$(quote_sh_literal "$prefix")"
+			fi
+			expr+="\"${root_expr}\""
+			expanded="${expanded#*%ROOT}"
+		done
+		suffix="${expanded//$'\x01'/%}"
+		if [[ -n "$suffix" ]]; then
+			expr+="$(quote_sh_literal "$suffix")"
+		fi
+		if [[ -z "$expr" ]]; then
+			expr="''"
+		fi
+		if [[ -n "$out" ]]; then
+			out+=" "
+		fi
+		out+="$expr"
+	done
+	printf '%s' "$out"
+}
+
 # --- create bundle ---
 
 log "==> Bundling"
@@ -236,6 +302,18 @@ interp_offset=$((interp_offset - 1)) # account for leading "/"
 
 chmod -w "$tmpdir/out/orig/$name"
 
+# Copy --include files into bundle
+for inc in "${includes[@]}"; do
+	src="${inc%%:*}" dest="${inc#*:}"
+	mkdir -p "$tmpdir/out/$(dirname "$dest")"
+	cp "$src" "$tmpdir/out/$dest"
+done
+
+# Serialize add_flags for embedding in heredoc
+add_flags_exec=$(serialize_add_flags TEMP)
+add_flags_extract=$(serialize_add_flags TARGET)
+add_flags_extract_words=$(serialize_add_flag_words_sh '$TARGET')
+
 # Archive
 tar -C "$tmpdir/out" -czf "$tmpdir/bundle.tar.gz" .
 
@@ -263,13 +341,14 @@ cat - "$tmpdir/bundle.tar.gz" >"$output" <<-EOF
 	# We must NOT dd-patch orig/ in-place — that corrupts Node.js SEA binaries.
 	# Instead, copy to temp and patch the copy each time.
 	copy_and_run() {
-		local dir="\$1" shift; shift
+		local dir="\$1"; shift
 		local real_interp="\$dir/lib/${interp_basename}"
 		local tmp="\$(mktemp -d "\${TMPDIR:-/tmp}"/${name}.XXXXXX)"
 		trap 'rm -rf "\$tmp"' EXIT
 		cp "\$dir/orig/${name}" "\$tmp/${name}"
 		patch_interp "\$tmp/${name}" "\$real_interp"
-		LD_LIBRARY_PATH="\$dir/lib\${LD_LIBRARY_PATH:+:\$LD_LIBRARY_PATH}" LD_PRELOAD="\$dir/lib/cleanup_env.so\${LD_PRELOAD:+:\$LD_PRELOAD}" "\$tmp/${name}" "\$@"
+		${add_flags_exec}
+		LD_LIBRARY_PATH="\$dir/lib\${LD_LIBRARY_PATH:+:\$LD_LIBRARY_PATH}" LD_PRELOAD="\$dir/lib/cleanup_env.so\${LD_PRELOAD:+:\$LD_PRELOAD}" "\$tmp/${name}" "\${ADD_FLAGS[@]}" "\$@"
 		exit \$?
 	}
 	if [[ "\${1:-}" == "--extract" ]]; then
@@ -287,18 +366,17 @@ cat - "$tmpdir/bundle.tar.gz" >"$output" <<-EOF
 		mkdir -p "\$TARGET/bin"
 		cat - >"\$TARGET/bin/${name}" <<-EOF2
 			#!/bin/sh
-			dir="\\\$(cd "\\\$(dirname "\\\$0")/.." && pwd)"
-			real_interp="\\\$dir/lib/${interp_basename}"
+			real_interp="\$TARGET/lib/${interp_basename}"
 			tmp="\\\$(mktemp -d "\\\${TMPDIR:-/tmp}/${name}.XXXXXX")"
 			trap 'rm -rf "\\\$tmp"' EXIT
-			cp "\\\$dir/orig/${name}" "\\\$tmp/${name}"
+			cp "\$TARGET/orig/${name}" "\\\$tmp/${name}"
 			chmod +w "\\\$tmp/${name}"
 			{
 				printf '%s' "\\\$real_interp"
 				dd if=/dev/zero bs=1 count=\\\$((${INTERP_PLACEHOLDER_LEN} - \\\${#real_interp})) 2>/dev/null
 			} | dd of="\\\$tmp/${name}" bs=1 seek=${interp_offset} count=${INTERP_PLACEHOLDER_LEN} conv=notrunc 2>/dev/null
 			chmod -w "\\\$tmp/${name}"
-			LD_LIBRARY_PATH="\\\$dir/lib\\\${LD_LIBRARY_PATH:+:\\\$LD_LIBRARY_PATH}" LD_PRELOAD="\\\$dir/lib/cleanup_env.so\\\${LD_PRELOAD:+:\\\$LD_PRELOAD}" "\\\$tmp/${name}" "\\\$@"
+			LD_LIBRARY_PATH="\$TARGET/lib\\\${LD_LIBRARY_PATH:+:\\\$LD_LIBRARY_PATH}" LD_PRELOAD="\$TARGET/lib/cleanup_env.so\\\${LD_PRELOAD:+:\\\$LD_PRELOAD}" "\\\$tmp/${name}" ${add_flags_extract_words} "\\\$@"
 			exit \\\$?
 		EOF2
 		chmod +x "\$TARGET/bin/${name}"

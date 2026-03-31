@@ -30,18 +30,28 @@
         , target
         , pkgs
         , type ? "rpath"
+        , extraFiles ? { }
+        , addFlags ? [ ]
         }:
-          assert builtins.elem type [ "rpath" "preload" ];
-          if type == "rpath" then
-            pkgs.runCommandCC name { buildInputs = [ pkgs.patchelf pkgs.gnutar ]; }
-              ''
-                bash ${./.}/bundle-rpath.bash --no-nix-locate --format exe -o $out ${target}
-              ''
-          else
-            pkgs.runCommandCC name { buildInputs = [ pkgs.patchelf pkgs.gnutar ]; }
-              ''
-                bash ${./.}/bundle-preload.bash --no-nix-locate -o $out ${target}
-              '';
+        let
+          addFlagArgs =
+            pkgs.lib.concatMapStrings (flag: " --add-flag ${pkgs.lib.escapeShellArg flag}") addFlags;
+          includeArgs =
+            pkgs.lib.concatStrings (pkgs.lib.mapAttrsToList
+              (dest: src: " --include ${pkgs.lib.escapeShellArg "${toString src}:${dest}"}")
+              extraFiles);
+        in
+        assert builtins.elem type [ "rpath" "preload" ];
+        if type == "rpath" then
+          pkgs.runCommandCC name { buildInputs = [ pkgs.patchelf pkgs.gnutar ]; }
+            ''
+              bash ${./.}/bundle-rpath.bash --no-nix-locate --format exe -o $out${includeArgs}${addFlagArgs} ${target}
+            ''
+        else
+          pkgs.runCommandCC name { buildInputs = [ pkgs.patchelf pkgs.gnutar ]; }
+            ''
+              bash ${./.}/bundle-preload.bash --no-nix-locate -o $out${includeArgs}${addFlagArgs} ${target}
+            '';
 
       aws-lambda-zip =
         { name
@@ -72,6 +82,33 @@
           inherit pkgs;
           name = "curl";
           target = "${pkgs.curl}/bin/curl";
+        };
+        test-include-file = pkgs.writeText "test-include" "BUNDLED_CONTENT_OK";
+        test-add-flag-rpath = self.lib.${system}.single-exe {
+          inherit pkgs;
+          name = "cat";
+          target = "${pkgs.coreutils}/bin/cat";
+          extraFiles = { "test/foo" = test-include-file; };
+          addFlags = [ "%ROOT/test/foo" ];
+        };
+        test-add-flag-preload = self.lib.${system}.single-exe {
+          inherit pkgs;
+          name = "cat";
+          target = "${pkgs.coreutils}/bin/cat";
+          type = "preload";
+          extraFiles = { "test/foo" = test-include-file; };
+          addFlags = [ "%ROOT/test/foo" ];
+        };
+        test-add-flag-preload-space = self.lib.${system}.single-exe {
+          inherit pkgs;
+          name = "python3";
+          target = "${pkgs.python3}/bin/python3";
+          type = "preload";
+          addFlags = [
+            "-c"
+            "import sys; print(repr(sys.argv[0]))"
+            "foo bar"
+          ];
         };
         # FHS 環境: sandbox 内に /usr/bin/env が無いため、
         # バンドル済みスクリプト (#!/usr/bin/env bash) の実行に必要
@@ -211,6 +248,75 @@
                 [ "$so_count" -ge 5 ]
 
                 echo "PASS: single-exe-preload-extract"
+              '
+              mkdir -p $out
+            '';
+
+          add-flag-rpath-run = pkgs.runCommand "check-add-flag-rpath-run"
+            { }
+            ''
+              ${testFHSRun}/bin/test-fhs-run -c '
+                output=$(${test-add-flag-rpath} --)
+                echo "$output"
+                echo "$output" | grep -q "BUNDLED_CONTENT_OK"
+                echo "PASS: add-flag-rpath-run"
+              '
+              mkdir -p $out
+            '';
+
+          add-flag-rpath-extract = pkgs.runCommand "check-add-flag-rpath-extract"
+            { }
+            ''
+              ${testFHSRun}/bin/test-fhs-run -c '
+                extractdir="$TMPDIR/extracted"
+                ${test-add-flag-rpath} --extract "$extractdir"
+                test -f "$extractdir/test/foo"
+                output=$("$extractdir/bin/cat")
+                echo "$output"
+                echo "$output" | grep -q "BUNDLED_CONTENT_OK"
+                echo "PASS: add-flag-rpath-extract"
+              '
+              mkdir -p $out
+            '';
+
+          add-flag-preload-run = pkgs.runCommand "check-add-flag-preload-run"
+            { }
+            ''
+              ${testFHSRun}/bin/test-fhs-run -c '
+                output=$(${test-add-flag-preload} --)
+                echo "$output"
+                echo "$output" | grep -q "BUNDLED_CONTENT_OK"
+                echo "PASS: add-flag-preload-run"
+              '
+              mkdir -p $out
+            '';
+
+          add-flag-preload-extract = pkgs.runCommand "check-add-flag-preload-extract"
+            { }
+            ''
+              ${testFHSRun}/bin/test-fhs-run -c '
+                extractdir="$TMPDIR/extracted"
+                ${test-add-flag-preload} --extract "$extractdir"
+                test -f "$extractdir/test/foo"
+                output=$("$extractdir/bin/cat")
+                echo "$output"
+                echo "$output" | grep -q "BUNDLED_CONTENT_OK"
+                echo "PASS: add-flag-preload-extract"
+              '
+              mkdir -p $out
+            '';
+
+          add-flag-preload-extract-space = pkgs.runCommand "check-add-flag-preload-extract-space"
+            { }
+            ''
+              ${testFHSRun}/bin/test-fhs-run -c '
+                extractdir="$TMPDIR/extracted"
+                ${test-add-flag-preload-space} --extract "$extractdir"
+                output=$("$extractdir/bin/python3")
+                expected=$(printf "\\047foo bar\\047")
+                echo "$output"
+                test "$output" = "$expected"
+                echo "PASS: add-flag-preload-extract-space"
               '
               mkdir -p $out
             '';

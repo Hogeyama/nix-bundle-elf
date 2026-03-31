@@ -38,6 +38,8 @@ nix build .#example-single-exe
             inherit pkgs;
             name = "myapp";
             target = "${pkgs.curl}/bin/curl";
+            extraFiles = { "conf/config.yaml" = ./config.yaml; };
+            addFlags = [ "--config" "%ROOT/conf/config.yaml" ];
           };
 
           # preload strategy
@@ -46,6 +48,8 @@ nix build .#example-single-exe
             name = "myapp";
             target = "${pkgs.curl}/bin/curl";
             type = "preload";
+            extraFiles = { "conf/config.yaml" = ./config.yaml; };
+            addFlags = [ "--config" "%ROOT/conf/config.yaml" ];
           };
         };
       }
@@ -53,13 +57,16 @@ nix build .#example-single-exe
 }
 ```
 
-### `lib.single-exe { pkgs; name; target; type ? "rpath"; }`
+### `lib.single-exe { pkgs; name; target; type ? "rpath"; extraFiles ? {}; addFlags ? []; }`
 
 Builds a derivation that outputs a self-extracting executable.
 
 - `name`: Output binary name.
 - `target`: Path to the binary (e.g., `"${pkgs.foo}/bin/foo"`).
 - `type` (optional): `"rpath"` (default) or `"preload"`.
+- `extraFiles` (optional): Attrset of bundle-relative paths to source files.
+- `addFlags` (optional): List of arguments injected before user-provided args.
+  Use `%ROOT` to refer to the extracted bundle root, and `%%` for a literal `%`.
 
 ### `lib.aws-lambda-zip { pkgs; name; target; }`
 
@@ -78,6 +85,12 @@ Bundles using RPATH rewriting. Supports both Nix and foreign binaries.
 # Foreign binary (auto-resolves deps via nix-locate)
 ./bundle-rpath.bash ./some-foreign-binary -o ./my-app
 
+# Bundle an extra config file and inject runtime flags
+./bundle-rpath.bash /nix/store/...-hl-*/bin/hl -o ./hl \
+  --include ./config.yaml:conf/config.yaml \
+  --add-flag '--config' \
+  --add-flag '%ROOT/conf/config.yaml'
+
 # Lambda zip
 ./bundle-rpath.bash /nix/store/...-curl-*/bin/curl --format lambda -o ./function.zip
 ```
@@ -89,6 +102,11 @@ Bundles using LD_PRELOAD instead of RPATH rewriting.
 ```bash
 ./bundle-preload.bash ~/.local/bin/copilot -o ./copilot
 ```
+
+Both CLI entry points accept repeatable `--include <src>:<dest>` and
+`--add-flag <arg>` options. `--add-flag` arguments are inserted before
+user arguments, `%ROOT` expands to the extracted bundle root at runtime,
+and `%%` escapes a literal `%`.
 
 ### Running the generated executable
 
