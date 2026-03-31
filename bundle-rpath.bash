@@ -3,30 +3,52 @@ set -euo pipefail
 
 SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
 source "$SCRIPT_DIR/lib/resolve-tool.bash"
-OLDPWD="$PWD"
 
 PATCHELF=$(resolve_tool "" patchelf patchelf)
 
-target="" # binary to bundle
-name=""   # name after bundling
-format=""
-use_nix_locate=true
 INTERP_PLACEHOLDER_LEN=256
 INTERP_PLACEHOLDER_TAG="NIXBUNDLEELF_INTERP_PLACEHOLDER"
+
+usage() {
+	cat >&2 <<-EOF
+		Usage: $(basename "$0") <binary> [options]
+
+		Bundles an ELF binary into a self-extracting executable or Lambda zip
+		with all needed libraries, using RPATH rewriting.
+
+		The generated executable supports:
+		  <result> [--] ARGS       Extract to temp dir and run with ARGS
+		  <result> --extract DIR   Extract permanently to DIR
+
+		Options:
+		  -o, --output <path>      Output file (default: ./<basename of input>)
+		  --format <exe|lambda>    Output format (default: exe)
+		  --no-nix-locate          Disable nix-locate (error if binary is foreign)
+		  -h, --help               Show this help
+	EOF
+	exit 1
+}
+
+target=""
+output=""
+format=""
+use_nix_locate=true
+
 parse_args() {
 	while (($# > 0)); do
 		case "$1" in
-		--help)
-			echo "Usage: $0 <target> --format <exe|lambda> [--no-nix-locate] [name]"
-			exit 0
+		-h | --help) usage ;;
+		-o | --output)
+			output="${2:?--output requires an argument}"
+			shift
 			;;
 		--format)
-			if [[ -z "$2" ]]; then
+			if [[ -z "${2:-}" ]]; then
 				echo "Error: format is not specified" >&2
 				exit 1
 			fi
 			if [[ "$2" != "exe" && "$2" != "lambda" ]]; then
-				echo "Error: invalid format" >&2
+				echo "Error: invalid format: $2" >&2
 				exit 1
 			fi
 			format=$2
@@ -35,13 +57,15 @@ parse_args() {
 		--no-nix-locate)
 			use_nix_locate=false
 			;;
+		-*)
+			echo "Error: unknown option: $1" >&2
+			exit 1
+			;;
 		*)
 			if [[ -z "$target" ]]; then
-				target=$(realpath "$1")
-			elif [[ -z "$name" ]]; then
-				name=$1
+				target="$1"
 			else
-				echo "Error: too many arguments" >&2
+				echo "Error: unexpected argument: $1" >&2
 				exit 1
 			fi
 			;;
@@ -50,22 +74,30 @@ parse_args() {
 	done
 
 	if [[ -z "$target" ]]; then
-		echo "Error: target is not specified" >&2
-		exit 1
+		usage
 	fi
 
-	if ! [[ -e "$target" ]]; then
-		echo "Error: target does not exist" >&2
+	target=$(realpath "$target")
+
+	if [[ ! -f "$target" ]]; then
+		echo "Error: target does not exist: $target" >&2
 		exit 1
 	fi
 
 	if [[ -z "$format" ]]; then
-		echo "Error: format is not specified" >&2
-		exit 1
+		format=exe
 	fi
 
-	if [[ -z "$name" ]]; then
-		name=$(basename "$target")
+	if [[ -z "$output" ]]; then
+		output="$(pwd)/$(basename "$target")"
+	fi
+
+	name=$(basename "$output")
+	output="$(cd "$(dirname "$output")" && pwd)/$name"
+
+	if [[ -e "$output" ]]; then
+		echo "Error: $output already exists" >&2
+		exit 1
 	fi
 }
 
@@ -216,10 +248,7 @@ bundle_exe() {
 	tar -C "$tmpdir/out" -czf "$tmpdir/bundle.tar.gz" .
 
 	# create self-extracting script
-	bundled="${name}"
-	touch "$bundled"
-	chmod +x "$bundled"
-	cat - "$tmpdir/bundle.tar.gz" >"$bundled" <<-EOF
+	cat - "$tmpdir/bundle.tar.gz" >"$output" <<-EOF
 		#!/usr/bin/env bash
 		set -u
 		TEMP="\$(mktemp -d "\${TMPDIR:-/tmp}"/${name}.XXXXXX)"
@@ -277,12 +306,7 @@ bundle_exe() {
 		#START_OF_TAR#
 	EOF
 
-	if [[ -e "$OLDPWD/$bundled" ]]; then
-		echo "Error: $bundled already exists" >&2
-		exit 1
-	fi
-	mv -n "$bundled" "$OLDPWD"
-	realpath "$OLDPWD/$bundled"
+	chmod +x "$output"
 }
 
 bundle_lambda() {
@@ -295,15 +319,9 @@ bundle_lambda() {
 		out/bootstrap
 	chmod -w out/bootstrap
 
-	# zip
-	(cd out && zip -qr function.zip .)
-
-	if [[ -e "$OLDPWD/function.zip" ]]; then
-		echo "Error: function.zip already exists" >&2
-		exit 1
-	fi
-	mv -n "$tmpdir/out/function.zip" "$OLDPWD"
-	realpath "$OLDPWD/function.zip"
+	# zip (strip .zip suffix if present — zip adds it automatically)
+	local zip_base="${output%.zip}"
+	(cd out && zip -qr "$zip_base" .)
 }
 
 main "$@"

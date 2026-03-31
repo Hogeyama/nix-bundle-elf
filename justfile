@@ -20,8 +20,7 @@ test-rpath-foreign: download-copilot
     set -euo pipefail
     echo "==> Testing bundle-rpath with foreign binary"
     rm -f {{ test_dir }}/copilot-rpath
-    bash bundle-rpath.bash {{ test_dir }}/bin/copilot --format exe copilot-rpath
-    mv copilot-rpath {{ test_dir }}/
+    bash bundle-rpath.bash --format exe -o {{ test_dir }}/copilot-rpath {{ test_dir }}/bin/copilot
     echo "--- execute mode ---"
     output=$({{ test_dir }}/copilot-rpath -- --version 2>&1) || true
     echo "$output"

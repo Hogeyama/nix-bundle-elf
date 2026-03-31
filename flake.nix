@@ -35,14 +35,12 @@
           if type == "rpath" then
             pkgs.runCommandCC name { buildInputs = [ pkgs.patchelf pkgs.gnutar ]; }
               ''
-                bundled=$(bash ${./.}/bundle-rpath.bash --no-nix-locate --format exe ${target} ${name})
-                mv $bundled $out
+                bash ${./.}/bundle-rpath.bash --no-nix-locate --format exe -o $out ${target}
               ''
           else
             pkgs.runCommandCC name { buildInputs = [ pkgs.patchelf pkgs.gnutar ]; }
               ''
-                bash ${./.}/bundle-preload.bash --no-nix-locate -o ${name} ${target}
-                mv ${name} $out
+                bash ${./.}/bundle-preload.bash --no-nix-locate -o $out ${target}
               '';
 
       aws-lambda-zip =
@@ -52,8 +50,8 @@
         }:
         pkgs.runCommandCC name { buildInputs = [ pkgs.patchelf pkgs.zip ]; }
           ''
-            bundled=$(bash ${./.}/bundle-rpath.bash --no-nix-locate --format lambda ${target} ${name})
-            mv $bundled $out
+            bash ${./.}/bundle-rpath.bash --no-nix-locate --format lambda -o function.zip ${target}
+            mv function.zip $out
           '';
     in
     flake-utils.lib.eachSystem supportedSystems (system:
