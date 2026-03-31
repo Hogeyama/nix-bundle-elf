@@ -14,6 +14,7 @@
         #       inherit pkgs;
         #       name = "foo";
         #       target = "${pkgs.foo}/bin/foo";
+        #       type = "preload";  # optional, default "rpath"
         #     }
         # * usage of the generated file:
         #   * `result --extract /path/to/dir` extracts the target
@@ -21,15 +22,28 @@
         #     scripts `/path/to/dir/bin/$name` that runs the target.
         #   * `result [--] ARGS` extract the bundle to temporary directory
         #     and runs the target with `ARGS`.
+        #
+        # type:
+        #   "rpath"   — uses patchelf --set-rpath (default, simpler)
+        #   "preload" — uses LD_PRELOAD (preserves NOTE segments, Node.js SEA safe)
         { name
         , target
         , pkgs
+        , type ? "rpath"
         }:
-        pkgs.runCommandCC name { buildInputs = [ pkgs.patchelf pkgs.gnutar ]; }
-          ''
-            bundled=$(bash ${./bundle.bash} --format exe ${target} ${name})
-            mv $bundled $out
-          '';
+          assert builtins.elem type [ "rpath" "preload" ];
+          if type == "rpath" then
+            pkgs.runCommandCC name { buildInputs = [ pkgs.patchelf pkgs.gnutar ]; }
+              ''
+                bundled=$(bash ${./.}/bundle-rpath.bash --no-nix-locate --format exe ${target} ${name})
+                mv $bundled $out
+              ''
+          else
+            pkgs.runCommandCC name { buildInputs = [ pkgs.patchelf pkgs.gnutar ]; }
+              ''
+                bash ${./.}/bundle-preload.bash --no-nix-locate -o ${name} ${target}
+                mv ${name} $out
+              '';
 
       aws-lambda-zip =
         { name
@@ -38,7 +52,7 @@
         }:
         pkgs.runCommandCC name { buildInputs = [ pkgs.patchelf pkgs.zip ]; }
           ''
-            bundled=$(bash ${./bundle.bash} --format lambda ${target} ${name})
+            bundled=$(bash ${./.}/bundle-rpath.bash --no-nix-locate --format lambda ${target} ${name})
             mv $bundled $out
           '';
     in
@@ -49,6 +63,12 @@
           inherit pkgs;
           name = "curl";
           target = "${pkgs.curl}/bin/curl";
+        };
+        test-single-exe-preload = self.lib.${system}.single-exe {
+          inherit pkgs;
+          name = "curl";
+          target = "${pkgs.curl}/bin/curl";
+          type = "preload";
         };
         test-lambda-zip = self.lib.${system}.aws-lambda-zip {
           inherit pkgs;
@@ -152,6 +172,51 @@
               mkdir -p $out
             '';
 
+          # preload 版: curl --version で動作確認
+          single-exe-preload-run = pkgs.runCommand "check-single-exe-preload-run"
+            { }
+            ''
+              ${testFHSRun}/bin/test-fhs-run -c '
+                output=$(${test-single-exe-preload} -- --version)
+                echo "$output"
+                echo "$output" | grep -q "curl"
+                echo "$output" | grep -q "libcurl"
+                echo "PASS: single-exe-preload-run"
+              '
+              mkdir -p $out
+            '';
+
+          # preload 版: --extract で展開し、transitive 依存が正しく収集されていることを確認
+          single-exe-preload-extract = pkgs.runCommand "check-single-exe-preload-extract"
+            { }
+            ''
+              ${testFHSRun}/bin/test-fhs-run -c '
+                extractdir="$TMPDIR/extracted"
+                ${test-single-exe-preload} --extract "$extractdir"
+
+                # ラッパースクリプトの存在と実行
+                test -x "$extractdir/bin/curl"
+                output=$("$extractdir/bin/curl" --version)
+                echo "$output"
+                echo "$output" | grep -q "curl"
+
+                # cleanup_env.so の存在確認
+                test -f "$extractdir/lib/cleanup_env.so"
+
+                # transitive な依存ライブラリの存在確認
+                ls "$extractdir/lib/"
+                test -n "$(find "$extractdir/lib" -name "libcurl.so*" -print -quit)"
+                test -n "$(find "$extractdir/lib" -name "libz.so*" -o -name "libzstd.so*" -print -quit)"
+
+                so_count=$(find "$extractdir/lib" -name "*.so*" | wc -l)
+                echo "Found $so_count shared libraries"
+                [ "$so_count" -ge 5 ]
+
+                echo "PASS: single-exe-preload-extract"
+              '
+              mkdir -p $out
+            '';
+
           # Lambda zip の構造と transitive 依存を確認
           lambda-zip-structure = pkgs.runCommand "check-lambda-zip-structure"
             {
@@ -179,6 +244,9 @@
               echo "PASS: lambda-zip-structure ($so_count shared libs)"
               mkdir -p $out
             '';
+        };
+        devShells.default = pkgs.mkShell {
+          buildInputs = [ pkgs.patchelf pkgs.just pkgs.gcc pkgs.gnutar pkgs.gnugrep pkgs.coreutils ];
         };
         lib = {
           inherit single-exe aws-lambda-zip;

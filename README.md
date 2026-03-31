@@ -47,7 +47,7 @@ nix build .#example-single-exe
 For quick local testing without flakes:
 
 ```bash
-bash bundle.bash <target> --format exe [name]
+bash bundle-rpath.bash <target> --format exe [name]
 ```
 
 - `target`: Path to the ELF binary to bundle.
@@ -59,7 +59,7 @@ Examples:
 
 ```bash
 # self-contained executable
-bash bundle.bash /nix/store/...-curl-*/bin/curl --format exe curl-bundled
+bash bundle-rpath.bash /nix/store/...-curl-*/bin/curl --format exe curl-bundled
 ./curl-bundled -- --version
 
 # extract the payload to a directory instead of executing

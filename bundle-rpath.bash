@@ -1,18 +1,23 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
+source "$SCRIPT_DIR/lib/resolve-tool.bash"
 OLDPWD="$PWD"
+
+PATCHELF=$(resolve_tool "" patchelf patchelf)
 
 target="" # binary to bundle
 name=""   # name after bundling
 format=""
+use_nix_locate=true
 INTERP_PLACEHOLDER_LEN=256
 INTERP_PLACEHOLDER_TAG="NIXBUNDLEELF_INTERP_PLACEHOLDER"
 parse_args() {
 	while (($# > 0)); do
 		case "$1" in
 		--help)
-			echo "Usage: $0 <target> --format <exe|lambda> [name]"
+			echo "Usage: $0 <target> --format <exe|lambda> [--no-nix-locate] [name]"
 			exit 0
 			;;
 		--format)
@@ -26,6 +31,9 @@ parse_args() {
 			fi
 			format=$2
 			shift
+			;;
+		--no-nix-locate)
+			use_nix_locate=false
 			;;
 		*)
 			if [[ -z "$target" ]]; then
@@ -61,68 +69,65 @@ parse_args() {
 	fi
 }
 
-# gather shared libraries recursively
-function gather_deps() {
-	declare -A libs=()
-	declare -a runpaths=()
-	local queue=("$1") interpreterb=$2
+# Patch a foreign (non-Nix) binary to use /nix/store libraries.
+# After this, the binary has proper RPATH and can be processed by gather_deps.
+patch_foreign() {
+	source "$SCRIPT_DIR/lib/resolve-foreign-deps.bash"
 
-	while [[ ${#queue[@]} -gt 0 ]]; do
-		local current="${queue[0]}"
-		queue=("${queue[@]:1}") # dequeue
+	NIX_LOCATE=$(resolve_tool "" nix-locate nix-index)
 
-		# check if already visited
-		if [[ -n "${libs["$current"]:-}" ]]; then
-			continue
+	scan_needed "$target"
+
+	if [[ ${#real_needed[@]} -eq 0 && -z "$interp_needed" ]]; then
+		echo "Error: no dynamic dependencies found. Is this a static binary?" >&2
+		exit 1
+	fi
+
+	log "==> Resolving foreign dependencies with nix-locate"
+	resolve_libs
+
+	if [[ ${#not_found[@]} -gt 0 ]]; then
+		echo "Error: could not find packages for: ${not_found[*]}" >&2
+		exit 1
+	fi
+
+	log "==> Building packages"
+	build_packages
+
+	find_interpreter
+
+	if [[ -z "$new_interp" ]]; then
+		echo "Error: could not find interpreter (ld-linux)" >&2
+		exit 1
+	fi
+
+	# Collect RPATH entries from store paths
+	local rpath_entries=()
+	for attr in "${!attr_to_storepath[@]}"; do
+		local sp="${attr_to_storepath[$attr]}"
+		if [[ -d "$sp/lib" ]]; then
+			rpath_entries+=("$sp/lib")
 		fi
-		libs["$current"]=1
-
-		needed_s=$(patchelf --print-needed "$current")
-		mapfile -t needed <<<"$needed_s"
-		runpaths_s=$(patchelf --print-rpath "$current")
-		IFS=: read -ra cur_runpaths <<<"$runpaths_s"
-		runpaths+=("${cur_runpaths[@]}")
-
-		for libname in "${needed[@]}"; do
-			# skip empty entries (e.g. when patchelf --print-needed returns nothing)
-			if [[ -z "$libname" ]]; then
-				continue
-			fi
-			# ignore interpreter
-			if [[ "$libname" == "$interpreterb" ]]; then
-				continue
-			fi
-
-			# identify the full path of the library
-			local found=""
-			for rp in "${runpaths[@]}"; do
-				if [[ -e "$rp/$libname" ]]; then
-					found="$rp/$libname"
-					break
-				fi
-			done
-
-			if [[ -z "$found" ]]; then
-				if [[ $libname =~ libc.so.* ]]; then
-					# probably bootstrap case
-					continue
-				else
-					echo "Error: could not find library $libname needed by $current" >&2
-					exit 1
-				fi
-			fi
-
-			queue+=("$found")
-		done
 	done
+	if [[ -n "$interp_extra_storepath" && -d "$interp_extra_storepath/lib" ]]; then
+		rpath_entries+=("$interp_extra_storepath/lib")
+	fi
+	local rpath
+	rpath=$(IFS=:; echo "${rpath_entries[*]}")
 
-	# remove the original binary
-	unset 'libs[$1]'
+	# Patch a copy of the binary
+	local patched="$tmpdir/patched_$(basename "$target")"
+	cp "$target" "$patched"
+	chmod +w "$patched"
+	"$PATCHELF" --set-interpreter "$new_interp" "$patched"
+	"$PATCHELF" --set-rpath "$rpath" "$patched"
+	chmod -w "$patched"
 
-	for libfile in "${!libs[@]}"; do
-		printf "%s\n" "$libfile"
-	done
+	log "==> Patched to use /nix/store paths, proceeding with bundling"
+	target="$patched"
 }
+
+source "$SCRIPT_DIR/lib/gather-nix-deps.bash"
 
 main() {
 	parse_args "$@"
@@ -133,8 +138,20 @@ main() {
 	mkdir -p "$tmpdir"
 	pushd "$tmpdir" >/dev/null
 
-	# find interpreter
-	interpreter=$(patchelf --print-interpreter "${target}")
+	# Detect foreign binary and resolve dependencies if needed
+	interpreter=$("$PATCHELF" --print-interpreter "${target}")
+	if [[ "$interpreter" != /nix/store/* ]]; then
+		if ! $use_nix_locate; then
+			echo "Error: target binary has a non-Nix interpreter ($interpreter)." >&2
+			echo "  Use nix-locate to resolve dependencies (remove --no-nix-locate)," >&2
+			echo "  or provide a Nix-built binary." >&2
+			exit 1
+		fi
+		patch_foreign
+	fi
+
+	# find interpreter (may have changed after patch_foreign)
+	interpreter=$("$PATCHELF" --print-interpreter "${target}")
 	interpreterb=$(basename "$interpreter")
 
 	# gather shared libraries
@@ -150,7 +167,7 @@ main() {
 		libb=$(basename "$libfile")
 		cp "$libfile" out/lib
 		chmod +w "out/lib/$libb"
-		patchelf --set-rpath \$ORIGIN "out/lib/$libb"
+		"$PATCHELF" --set-rpath \$ORIGIN "out/lib/$libb"
 		chmod -w "out/lib/$libb"
 	done
 
@@ -177,7 +194,7 @@ bundle_exe() {
 	local placeholder="/${INTERP_PLACEHOLDER_TAG}"
 	while [[ ${#placeholder} -lt $INTERP_PLACEHOLDER_LEN ]]; do placeholder="${placeholder}/"; done
 	placeholder="${placeholder:0:$INTERP_PLACEHOLDER_LEN}"
-	patchelf \
+	"$PATCHELF" \
 		--set-interpreter "$placeholder" \
 		--set-rpath \$ORIGIN/../lib \
 		"out/orig/${name}"
@@ -272,7 +289,7 @@ bundle_lambda() {
 	# patchelf executable
 	cp "${target}" out/bootstrap
 	chmod +w out/bootstrap
-	patchelf \
+	"$PATCHELF" \
 		--set-interpreter "./lib/$interpreterb" \
 		--set-rpath ./lib \
 		out/bootstrap
