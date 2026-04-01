@@ -59,8 +59,8 @@ gather_deps() {
 					# probably bootstrap case
 					continue
 				else
-					echo "Error: could not find library $libname needed by $current" >&2
-					exit 1
+					echo "Notice: could not resolve $libname from RPATH/RUNPATH for $current" >&2
+					return 1
 				fi
 			fi
 

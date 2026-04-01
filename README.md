@@ -124,8 +124,9 @@ and `%%` escapes a literal `%`.
 ### rpath strategy (`bundle-rpath.bash`)
 
 1. Detects the interpreter with `patchelf --print-interpreter`.
-2. Traverses dependencies via `patchelf --print-needed` using RPATH/RUNPATH.
-   For foreign binaries, resolves dependencies via `nix-locate` first.
+2. First tries to traverse dependencies via `patchelf --print-needed` using
+   RPATH/RUNPATH. If that is insufficient, resolves dependencies via
+   `nix-locate` (unless `--no-nix-locate` is set).
 3. Copies the interpreter and libraries to `lib/`, rewrites RUNPATH to `$ORIGIN`.
 4. Sets the binary's RPATH to `$ORIGIN/../lib` and interpreter to a placeholder.
 5. Creates a self-extracting script that patches the interpreter at runtime via `dd`.

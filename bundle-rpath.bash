@@ -199,13 +199,14 @@ main() {
 	mkdir -p "$tmpdir"
 	pushd "$tmpdir" >/dev/null
 
-	# Detect foreign binary and resolve dependencies if needed
+	# Determine whether dependency resolution can be done via RPATH only.
 	interpreter=$("$PATCHELF" --print-interpreter "${target}")
-	if [[ "$interpreter" != /nix/store/* ]]; then
+	interpreterb=$(basename "$interpreter")
+	if ! gather_deps "${target}" "$interpreterb" >/dev/null; then
+		log "  RPATH-only resolution was insufficient"
 		if ! $use_nix_locate; then
-			echo "Error: target binary has a non-Nix interpreter ($interpreter)." >&2
-			echo "  Use nix-locate to resolve dependencies (remove --no-nix-locate)," >&2
-			echo "  or provide a Nix-built binary." >&2
+			echo "Error: dependency resolution via RPATH/RUNPATH was insufficient." >&2
+			echo "  Use nix-locate to resolve dependencies (remove --no-nix-locate)." >&2
 			exit 1
 		fi
 		patch_foreign

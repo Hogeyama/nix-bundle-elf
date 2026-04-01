@@ -115,18 +115,10 @@ if [[ -e "$output" ]]; then
 	exit 1
 fi
 
-# --- detect Nix vs foreign binary ---
+# --- detect dependency resolution strategy ---
 
 interpreter=$("$PATCHELF" --print-interpreter "$target")
-is_nix_binary=false
-if [[ "$interpreter" == /nix/store/* ]]; then
-	is_nix_binary=true
-elif ! $use_nix_locate; then
-	echo "Error: target binary has a non-Nix interpreter ($interpreter)." >&2
-	echo "  Use nix-locate to resolve dependencies (remove --no-nix-locate)," >&2
-	echo "  or provide a Nix-built binary." >&2
-	exit 1
-fi
+interpreterb=$(basename "$interpreter")
 
 # --- gather dependencies ---
 
@@ -135,12 +127,9 @@ trap 'rm -rf "$tmpdir"' EXIT
 
 mkdir -p "$tmpdir/out"/{orig,lib}
 
-if $is_nix_binary; then
-	# Nix binary: walk RPATH to find deps
-	interpreterb=$(basename "$interpreter")
-
-	log "==> Gathering dependencies via RPATH"
-	libs_s=$(gather_deps "$target" "$interpreterb")
+log "==> Gathering dependencies via RPATH"
+libs=()
+if libs_s=$(gather_deps "$target" "$interpreterb"); then
 	mapfile -t libs <<<"$libs_s"
 
 	# Copy interpreter
@@ -154,12 +143,20 @@ if $is_nix_binary; then
 
 	interp_basename="$interpreterb"
 else
-	# Foreign binary: resolve via nix-locate
+	log "  RPATH-only resolution was insufficient"
+	if ! $use_nix_locate; then
+		echo "Error: dependency resolution via RPATH/RUNPATH was insufficient." >&2
+		echo "  Use nix-locate to resolve dependencies (remove --no-nix-locate)." >&2
+		exit 1
+	fi
+
+	# Resolve via nix-locate when RPATH is insufficient
 	source "$SCRIPT_DIR/lib/resolve-foreign-deps.bash"
 
 	# PATCHELF already set at top level
 	NIX_LOCATE=$(resolve_tool "" nix-locate nix-index)
 
+	log "==> Resolving unresolved dependencies with nix-locate"
 	log "==> Scanning $target"
 	scan_needed "$target"
 
