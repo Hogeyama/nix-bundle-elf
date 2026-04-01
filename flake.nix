@@ -43,14 +43,14 @@
         in
         assert builtins.elem type [ "rpath" "preload" ];
         if type == "rpath" then
-          pkgs.runCommandCC name { buildInputs = [ pkgs.patchelf pkgs.gnutar ]; }
+          pkgs.runCommandCC name { buildInputs = [ pkgs.bun pkgs.patchelf pkgs.gnutar ]; }
             ''
-              bash ${./.}/bundle-rpath.bash --no-nix-locate --format exe -o $out${includeArgs}${addFlagArgs} ${target}
+              bun run ${./.}/src/cli.ts rpath --no-nix-locate --format exe -o $out${includeArgs}${addFlagArgs} ${target}
             ''
         else
-          pkgs.runCommandCC name { buildInputs = [ pkgs.patchelf pkgs.gnutar ]; }
+          pkgs.runCommandCC name { buildInputs = [ pkgs.bun pkgs.patchelf pkgs.gnutar ]; }
             ''
-              bash ${./.}/bundle-preload.bash --no-nix-locate -o $out${includeArgs}${addFlagArgs} ${target}
+              bun run ${./.}/src/cli.ts preload --no-nix-locate -o $out${includeArgs}${addFlagArgs} ${target}
             '';
 
       aws-lambda-zip =
@@ -58,9 +58,9 @@
         , target
         , pkgs
         }:
-        pkgs.runCommandCC name { buildInputs = [ pkgs.patchelf pkgs.zip ]; }
+        pkgs.runCommandCC name { buildInputs = [ pkgs.bun pkgs.patchelf pkgs.zip ]; }
           ''
-            bash ${./.}/bundle-rpath.bash --no-nix-locate --format lambda -o function.zip ${target}
+            bun run ${./.}/src/cli.ts rpath --no-nix-locate --format lambda -o function.zip ${target}
             mv function.zip $out
           '';
     in
@@ -346,6 +346,48 @@
               [ "$so_count" -ge 5 ]
 
               echo "PASS: lambda-zip-structure ($so_count shared libs)"
+              mkdir -p $out
+            '';
+          # Verify bun + resolve-tool.ts works in the Nix sandbox
+          bun-resolve-tool = pkgs.runCommand "check-bun-resolve-tool"
+            { nativeBuildInputs = [ pkgs.bun pkgs.patchelf ]; }
+            ''
+              result=$(bun run ${./.}/src/lib/resolve-tool.ts patchelf patchelf)
+              echo "resolved: $result"
+              test -x "$result"
+              echo "PASS: bun-resolve-tool"
+              mkdir -p $out
+            '';
+          # Verify gather-nix-deps.ts collects transitive deps from a Nix binary
+          bun-gather-nix-deps = pkgs.runCommand "check-bun-gather-nix-deps"
+            { nativeBuildInputs = [ pkgs.bun pkgs.patchelf ]; }
+            ''
+              output=$(bun run ${./.}/src/lib/gather-nix-deps.ts ${pkgs.curl}/bin/curl)
+              echo "$output"
+
+              # Should find libcurl and several transitive deps
+              echo "$output" | grep -q "libcurl"
+              count=$(echo "$output" | wc -l)
+              echo "Found $count libraries"
+              [ "$count" -ge 5 ]
+
+              echo "PASS: bun-gather-nix-deps"
+              mkdir -p $out
+            '';
+          # Verify patchelf.ts reads interpreter, needed, and rpath from a real binary
+          bun-patchelf = pkgs.runCommand "check-bun-patchelf"
+            { nativeBuildInputs = [ pkgs.bun pkgs.patchelf ]; }
+            ''
+              output=$(bun run ${./.}/src/lib/patchelf.ts ${pkgs.curl}/bin/curl)
+              echo "$output"
+
+              # interpreter should be an absolute /nix/store path
+              echo "$output" | grep -q "^interpreter: /nix/store/"
+
+              # needed should include libcurl
+              echo "$output" | grep -q "libcurl"
+
+              echo "PASS: bun-patchelf"
               mkdir -p $out
             '';
         };

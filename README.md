@@ -74,36 +74,42 @@ Builds a Lambda-compatible zip with `bootstrap` and bundled libraries.
 
 ## CLI Usage
 
-### bundle-rpath.bash
+The repository's maintained CLI entry point is `src/cli.ts`:
+
+```bash
+bun run ./src/cli.ts <rpath|preload> [options] <binary>
+```
+
+### `bun run ./src/cli.ts rpath`
 
 Bundles using RPATH rewriting. Supports both Nix and foreign binaries.
 
 ```bash
 # Nix binary
-./bundle-rpath.bash /nix/store/...-curl-*/bin/curl -o ./curl-bundled
+bun run ./src/cli.ts rpath /nix/store/...-curl-*/bin/curl -o ./curl-bundled
 
 # Foreign binary (auto-resolves deps via nix-locate)
-./bundle-rpath.bash ./some-foreign-binary -o ./my-app
+bun run ./src/cli.ts rpath ./some-foreign-binary -o ./my-app
 
 # Bundle an extra config file and inject runtime flags
-./bundle-rpath.bash /nix/store/...-hl-*/bin/hl -o ./hl \
+bun run ./src/cli.ts rpath /nix/store/...-hl-*/bin/hl -o ./hl \
   --include ./config.yaml:conf/config.yaml \
   --add-flag '--config' \
   --add-flag '%ROOT/conf/config.yaml'
 
 # Lambda zip
-./bundle-rpath.bash /nix/store/...-curl-*/bin/curl --format lambda -o ./function.zip
+bun run ./src/cli.ts rpath /nix/store/...-curl-*/bin/curl --format lambda -o ./function.zip
 ```
 
-### bundle-preload.bash
+### `bun run ./src/cli.ts preload`
 
 Bundles using LD_PRELOAD instead of RPATH rewriting.
 
 ```bash
-./bundle-preload.bash ~/.local/bin/copilot -o ./copilot
+bun run ./src/cli.ts preload ~/.local/bin/copilot -o ./copilot
 ```
 
-Both CLI entry points accept repeatable `--include <src>:<dest>` and
+Both CLI commands accept repeatable `--include <src>:<dest>` and
 `--add-flag <arg>` options. `--add-flag` arguments are inserted before
 user arguments, `%ROOT` expands to the extracted bundle root at runtime,
 and `%%` escapes a literal `%`.
@@ -121,7 +127,7 @@ and `%%` escapes a literal `%`.
 
 ## How It Works
 
-### rpath strategy (`bundle-rpath.bash`)
+### rpath strategy
 
 1. Detects the interpreter with `patchelf --print-interpreter`.
 2. First tries to traverse dependencies via `patchelf --print-needed` using
@@ -131,7 +137,7 @@ and `%%` escapes a literal `%`.
 4. Sets the binary's RPATH to `$ORIGIN/../lib` and interpreter to a placeholder.
 5. Creates a self-extracting script that patches the interpreter at runtime via `dd`.
 
-### preload strategy (`bundle-preload.bash`)
+### preload strategy
 
 1. Same dependency resolution as rpath.
 2. Copies libraries to `lib/`, rewrites their RUNPATH to `$ORIGIN`.
