@@ -6,6 +6,8 @@ source "$SCRIPT_DIR/lib/resolve-tool.bash"
 
 PATCHELF=$(resolve_tool "" patchelf patchelf)
 
+log() { echo "$*" >&2; }
+
 INTERP_PLACEHOLDER_LEN=256
 INTERP_PLACEHOLDER_TAG="NIXBUNDLEELF_INTERP_PLACEHOLDER"
 
@@ -120,6 +122,8 @@ patch_foreign() {
 
 	NIX_LOCATE=$(resolve_tool "" nix-locate nix-index)
 
+	log "==> Resolving unresolved dependencies with nix-locate"
+	log "==> Scanning $target"
 	scan_needed "$target"
 
 	if [[ ${#real_needed[@]} -eq 0 && -z "$interp_needed" ]]; then
@@ -127,7 +131,7 @@ patch_foreign() {
 		exit 1
 	fi
 
-	log "==> Resolving foreign dependencies with nix-locate"
+	log "==> Resolving libraries with nix-locate"
 	resolve_libs
 
 	if [[ ${#not_found[@]} -gt 0 ]]; then
@@ -200,6 +204,7 @@ main() {
 	pushd "$tmpdir" >/dev/null
 
 	# Determine whether dependency resolution can be done via RPATH only.
+	log "==> Gathering dependencies via RPATH"
 	interpreter=$("$PATCHELF" --print-interpreter "${target}")
 	interpreterb=$(basename "$interpreter")
 	if ! gather_deps "${target}" "$interpreterb" >/dev/null; then
@@ -223,6 +228,9 @@ main() {
 	# copy interpreter
 	mkdir -p out/lib
 	cp "$interpreter" out/lib
+
+	log "==> Bundling"
+	log "  Patching library RUNPATH"
 
 	# copy and patchelf dynamic libraries
 	for libfile in "${libs[@]}"; do
@@ -252,6 +260,9 @@ main() {
 		bundle_lambda
 		;;
 	esac
+
+	log ""
+	log "Done: $output"
 }
 
 bundle_exe() {
