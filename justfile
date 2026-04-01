@@ -83,6 +83,14 @@ test-flake:
     #!/usr/bin/env bash
     nix flake check
 
+# Format shell scripts with shfmt
+format:
+    shfmt -w -bn -ci *.bash lib/*.bash
+
+# Lint shell scripts with shellcheck
+lint:
+    shellcheck *.bash lib/*.bash
+
 # Clean test artifacts
 clean:
     rm -rf {{ test_dir }}

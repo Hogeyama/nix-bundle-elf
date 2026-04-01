@@ -350,7 +350,16 @@
             '';
         };
         devShells.default = pkgs.mkShell {
-          buildInputs = [ pkgs.patchelf pkgs.just pkgs.gcc pkgs.gnutar pkgs.gnugrep pkgs.coreutils ];
+          buildInputs = [
+            pkgs.patchelf
+            pkgs.just
+            pkgs.gcc
+            pkgs.gnutar
+            pkgs.gnugrep
+            pkgs.coreutils
+            pkgs.shfmt
+            pkgs.shellcheck
+          ];
         };
         lib = {
           inherit single-exe aws-lambda-zip;
