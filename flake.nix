@@ -110,8 +110,7 @@
             "foo bar"
           ];
         };
-        # FHS 環境: sandbox 内に /usr/bin/env が無いため、
-        # バンドル済みスクリプト (#!/usr/bin/env bash) の実行に必要
+        # FHS 環境: sandbox 内で自己展開ラッパーを実行するために使う
         testFHSRun = pkgs.buildFHSEnv {
           name = "test-fhs-run";
           targetPkgs = p: [ p.bash p.coreutils p.gnutar p.gnugrep p.findutils p.patchelf ];
@@ -400,8 +399,6 @@
             pkgs.gnutar
             pkgs.gnugrep
             pkgs.coreutils
-            pkgs.shfmt
-            pkgs.shellcheck
             pkgs.typescript
             pkgs.biome
           ];

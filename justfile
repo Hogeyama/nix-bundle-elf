@@ -20,7 +20,7 @@ test-rpath-foreign: download-copilot
     set -euo pipefail
     echo "==> Testing bundle-rpath with foreign binary"
     rm -f {{ test_dir }}/copilot-rpath
-    bash bundle-rpath.bash --format exe -o {{ test_dir }}/copilot-rpath {{ test_dir }}/bin/copilot
+    bun run ./src/cli.ts rpath --format exe -o {{ test_dir }}/copilot-rpath {{ test_dir }}/bin/copilot
     echo "--- execute mode ---"
     output=$({{ test_dir }}/copilot-rpath -- --version 2>&1) || true
     echo "$output"
@@ -39,7 +39,7 @@ test-preload-foreign: download-copilot
     set -euo pipefail
     echo "==> Testing bundle-preload with foreign binary"
     rm -f {{ test_dir }}/copilot-preload
-    bash bundle-preload.bash -o {{ test_dir }}/copilot-preload {{ test_dir }}/bin/copilot
+    bun run ./src/cli.ts preload -o {{ test_dir }}/copilot-preload {{ test_dir }}/bin/copilot
     echo "--- execute mode ---"
     output=$({{ test_dir }}/copilot-preload -- --version 2>&1) || true
     echo "$output"
@@ -62,7 +62,7 @@ test-preload-sea: download-copilot
 
     # Preload version: should work because it doesn't use --set-rpath
     rm -f {{ test_dir }}/copilot-sea-preload
-    bash bundle-preload.bash -o {{ test_dir }}/copilot-sea-preload {{ test_dir }}/bin/copilot
+    bun run ./src/cli.ts preload -o {{ test_dir }}/copilot-sea-preload {{ test_dir }}/bin/copilot
     echo "--- preload: extract and check ---"
     rm -rf {{ test_dir }}/sea-preload-extracted
     {{ test_dir }}/copilot-sea-preload --extract {{ test_dir }}/sea-preload-extracted
@@ -85,12 +85,10 @@ test-flake:
 
 # Format all source files
 format:
-    shfmt -w -bn -ci *.bash lib/*.bash
     biome format --write src/
 
 # Lint all source files
 lint:
-    shellcheck -x *.bash lib/*.bash
     biome check src/
 
 # Type check TypeScript
