@@ -177,21 +177,42 @@ patch_foreign() {
 
 source "$SCRIPT_DIR/lib/gather-nix-deps.bash"
 
-# Generate shell code that initializes an ADD_FLAGS array with %ROOT replaced
-# by the given variable name (e.g. "TEMP" or "TARGET").
-serialize_add_flags() {
-	local root_var="$1"
-	echo 'ADD_FLAGS=()'
+quote_sh_literal() {
+	local value="$1"
+	printf "'%s'" "${value//\'/\'\\\'\'}"
+}
+
+# Produce a POSIX-sh-safe inline word list from add_flags[].
+# %ROOT is replaced by the shell expression given as $1 (e.g. '$TEMP').
+# Output example: '--verbose' '--config='"$TEMP"'/app.cfg'
+serialize_add_flag_words_sh() {
+	local root_expr="$1"
+	local flag expanded prefix suffix expr out=""
 	for flag in "${add_flags[@]}"; do
-		local expanded="$flag"
-		# 1. %% → sentinel (\x01) に退避
-		expanded="${expanded//%%/$'\x01'}"
-		# 2. %ROOT → 実際の変数参照に置換
-		expanded="${expanded//%ROOT/\$${root_var}}"
-		# 3. sentinel → % に復元
-		expanded="${expanded//$'\x01'/%}"
-		printf 'ADD_FLAGS+=(%s)\n' "${expanded@Q}"
+		expanded="${flag//%%/$'\x01'}"
+		expr=""
+		while [[ "$expanded" == *%ROOT* ]]; do
+			prefix="${expanded%%\%ROOT*}"
+			prefix="${prefix//$'\x01'/%}"
+			if [[ -n "$prefix" ]]; then
+				expr+="$(quote_sh_literal "$prefix")"
+			fi
+			expr+="\"${root_expr}\""
+			expanded="${expanded#*%ROOT}"
+		done
+		suffix="${expanded//$'\x01'/%}"
+		if [[ -n "$suffix" ]]; then
+			expr+="$(quote_sh_literal "$suffix")"
+		fi
+		if [[ -z "$expr" ]]; then
+			expr="''"
+		fi
+		if [[ -n "$out" ]]; then
+			out+=" "
+		fi
+		out+="$expr"
 	done
+	printf '%s' "$out"
 }
 
 main() {
@@ -300,13 +321,13 @@ bundle_exe() {
 	tar -C "$tmpdir/out" -czf "$tmpdir/bundle.tar.gz" .
 
 	# serialize add_flags for embedding in heredoc
-	local add_flags_exec add_flags_extract
-	add_flags_exec=$(serialize_add_flags TEMP)
-	add_flags_extract=$(serialize_add_flags TARGET)
+	local add_flags_words_exec add_flags_words_extract
+	add_flags_words_exec=$(serialize_add_flag_words_sh '\$TEMP')
+	add_flags_words_extract=$(serialize_add_flag_words_sh '\$TARGET')
 
 	# create self-extracting script
 	cat - "$tmpdir/bundle.tar.gz" >"$output" <<-EOF
-		#!/usr/bin/env bash
+		#!/bin/sh
 		set -u
 		TEMP="\$(mktemp -d "\${TMPDIR:-/tmp}"/${name}.XXXXXX)"
 		N=\$(grep -an "^#START_OF_TAR#" "\$0" | cut -d: -f1)
@@ -316,7 +337,7 @@ bundle_exe() {
 		# determined at bundle time to avoid runtime binary searching.
 		patch_interp() {
 			local binary="\$1" real_interp="\$2"
-			if [[ \${#real_interp} -ge ${INTERP_PLACEHOLDER_LEN} ]]; then
+			if [ \${#real_interp} -ge ${INTERP_PLACEHOLDER_LEN} ]; then
 				echo "Error: interpreter path too long (\${#real_interp} >= ${INTERP_PLACEHOLDER_LEN})" >&2
 				return 1
 			fi
@@ -327,13 +348,13 @@ bundle_exe() {
 			} | dd of="\$binary" bs=1 seek=${interp_offset} count=${INTERP_PLACEHOLDER_LEN} conv=notrunc 2>/dev/null
 			chmod -w "\$binary"
 		}
-		if [[ "\${1:-}" == "--extract" ]]; then
+		if [ "\${1:-}" = "--extract" ]; then
 			# extract mode
-			if [[ -z "\${2:-}" ]]; then
+			if [ -z "\${2:-}" ]; then
 				echo "Usage: \$0 --extract <path>"
 				exit 1
 			fi
-			if [[ -e "\$2" ]]; then
+			if [ -e "\$2" ]; then
 				echo "Error: \$2 already exists"
 				exit 1
 			fi
@@ -341,26 +362,23 @@ bundle_exe() {
 			mkdir -p "\$TARGET"
 			tar -C "\$TARGET" -xzf "\$TEMP/self.tar.gz" || exit 1
 			patch_interp "\$TARGET/orig/${name}" "\$TARGET/lib/${interpreterb}"
-			${add_flags_extract}
 			mkdir -p "\$TARGET/bin"
 			cat - >"\$TARGET/bin/${name}" <<-EOF2
-				#!/usr/bin/env bash
-				${add_flags_extract}
-				exec "\$TARGET/orig/${name}" \${ADD_FLAGS[@]+"\${ADD_FLAGS[@]}"} "\\\$@"
+				#!/bin/sh
+				exec "\$TARGET/orig/${name}" ${add_flags_words_extract} "\\\$@"
 			EOF2
 			chmod +x "\$TARGET/bin/${name}"
 			echo "successfully extracted to \$2"
 			exit 0
 		else
 			# execute mode
-			if [[ "\${1:-}" == "--" ]]; then
+			if [ "\${1:-}" = "--" ]; then
 				shift
 			fi
 			tar -C "\$TEMP" -xzf "\$TEMP/self.tar.gz" || exit 1
 			trap 'rm -rf \$TEMP' EXIT
 			patch_interp "\$TEMP/orig/${name}" "\$TEMP/lib/${interpreterb}"
-			${add_flags_exec}
-			"\$TEMP/orig/${name}" \${ADD_FLAGS[@]+"\${ADD_FLAGS[@]}"} "\$@"
+			"\$TEMP/orig/${name}" ${add_flags_words_exec} "\$@"
 			exit \$?
 		fi
 		#START_OF_TAR#

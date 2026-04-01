@@ -200,28 +200,14 @@ fi
 
 # --- serialize_add_flags ---
 
-# Generate shell code that initializes an ADD_FLAGS array with %ROOT replaced
-# by the given variable name (e.g. "TEMP" or "TARGET").
-serialize_add_flags() {
-	local root_var="$1"
-	echo 'ADD_FLAGS=()'
-	for flag in "${add_flags[@]}"; do
-		local expanded="$flag"
-		# 1. %% → sentinel (\x01) に退避
-		expanded="${expanded//%%/$'\x01'}"
-		# 2. %ROOT → 実際の変数参照に置換
-		expanded="${expanded//%ROOT/\$${root_var}}"
-		# 3. sentinel → % に復元
-		expanded="${expanded//$'\x01'/%}"
-		printf 'ADD_FLAGS+=(%s)\n' "${expanded@Q}"
-	done
-}
-
 quote_sh_literal() {
 	local value="$1"
 	printf "'%s'" "${value//\'/\'\\\'\'}"
 }
 
+# Produce a POSIX-sh-safe inline word list from add_flags[].
+# %ROOT is replaced by the shell expression given as $1 (e.g. '$TEMP').
+# Output example: '--verbose' '--config='"$TEMP"'/app.cfg'
 serialize_add_flag_words_sh() {
 	local root_expr="$1"
 	local flag expanded prefix suffix expr out=""
@@ -307,23 +293,22 @@ for inc in "${includes[@]}"; do
 done
 
 # Serialize add_flags for embedding in heredoc
-add_flags_exec=$(serialize_add_flags TEMP)
-add_flags_extract=$(serialize_add_flags TARGET)
-add_flags_extract_words=$(serialize_add_flag_words_sh '$TARGET')
+add_flags_words_exec=$(serialize_add_flag_words_sh '\$TEMP')
+add_flags_words_extract=$(serialize_add_flag_words_sh '$TARGET')
 
 # Archive
 tar -C "$tmpdir/out" -czf "$tmpdir/bundle.tar.gz" .
 
 # Create self-extracting script
 cat - "$tmpdir/bundle.tar.gz" >"$output" <<-EOF
-	#!/usr/bin/env bash
+	#!/bin/sh
 	set -u
 	TEMP="\$(mktemp -d "\${TMPDIR:-/tmp}"/${name}.XXXXXX)"
 	N=\$(grep -an "^#START_OF_TAR#" "\$0" | cut -d: -f1)
 	tail -n +"\$((N + 1))" <"\$0" > "\$TEMP/self.tar.gz" || exit 1
 	patch_interp() {
 		local binary="\$1" real_interp="\$2"
-		if [[ \${#real_interp} -ge ${INTERP_PLACEHOLDER_LEN} ]]; then
+		if [ \${#real_interp} -ge ${INTERP_PLACEHOLDER_LEN} ]; then
 			echo "Error: interpreter path too long (\${#real_interp} >= ${INTERP_PLACEHOLDER_LEN})" >&2
 			return 1
 		fi
@@ -344,16 +329,15 @@ cat - "$tmpdir/bundle.tar.gz" >"$output" <<-EOF
 		trap 'rm -rf "\$tmp" "\$TEMP"' EXIT
 		cp "\$dir/orig/${name}" "\$tmp/${name}"
 		patch_interp "\$tmp/${name}" "\$real_interp"
-		${add_flags_exec}
-		LD_LIBRARY_PATH="\$dir/lib\${LD_LIBRARY_PATH:+:\$LD_LIBRARY_PATH}" LD_PRELOAD="\$dir/lib/cleanup_env.so\${LD_PRELOAD:+:\$LD_PRELOAD}" "\$tmp/${name}" \${ADD_FLAGS[@]+"\${ADD_FLAGS[@]}"} "\$@"
+		LD_LIBRARY_PATH="\$dir/lib\${LD_LIBRARY_PATH:+:\$LD_LIBRARY_PATH}" LD_PRELOAD="\$dir/lib/cleanup_env.so\${LD_PRELOAD:+:\$LD_PRELOAD}" "\$tmp/${name}" ${add_flags_words_exec} "\$@"
 		exit \$?
 	}
-	if [[ "\${1:-}" == "--extract" ]]; then
-		if [[ -z "\${2:-}" ]]; then
+	if [ "\${1:-}" = "--extract" ]; then
+		if [ -z "\${2:-}" ]; then
 			echo "Usage: \$0 --extract <path>"
 			exit 1
 		fi
-		if [[ -e "\$2" ]]; then
+		if [ -e "\$2" ]; then
 			echo "Error: \$2 already exists"
 			exit 1
 		fi
@@ -373,7 +357,7 @@ cat - "$tmpdir/bundle.tar.gz" >"$output" <<-EOF
 				dd if=/dev/zero bs=1 count=\\\$((${INTERP_PLACEHOLDER_LEN} - \\\${#real_interp})) 2>/dev/null
 			} | dd of="\\\$tmp/${name}" bs=1 seek=${interp_offset} count=${INTERP_PLACEHOLDER_LEN} conv=notrunc 2>/dev/null
 			chmod -w "\\\$tmp/${name}"
-			LD_LIBRARY_PATH="\$TARGET/lib\\\${LD_LIBRARY_PATH:+:\\\$LD_LIBRARY_PATH}" LD_PRELOAD="\$TARGET/lib/cleanup_env.so\\\${LD_PRELOAD:+:\\\$LD_PRELOAD}" "\\\$tmp/${name}" ${add_flags_extract_words} "\\\$@"
+			LD_LIBRARY_PATH="\$TARGET/lib\\\${LD_LIBRARY_PATH:+:\\\$LD_LIBRARY_PATH}" LD_PRELOAD="\$TARGET/lib/cleanup_env.so\\\${LD_PRELOAD:+:\\\$LD_PRELOAD}" "\\\$tmp/${name}" ${add_flags_words_extract} "\\\$@"
 			exit \\\$?
 		EOF2
 		chmod +x "\$TARGET/bin/${name}"
@@ -381,7 +365,7 @@ cat - "$tmpdir/bundle.tar.gz" >"$output" <<-EOF
 		echo "successfully extracted to \$2"
 		exit 0
 	else
-		if [[ "\${1:-}" == "--" ]]; then
+		if [ "\${1:-}" = "--" ]; then
 			shift
 		fi
 		tar -C "\$TEMP" -xzf "\$TEMP/self.tar.gz" || exit 1
