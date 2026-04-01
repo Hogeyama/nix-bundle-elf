@@ -112,7 +112,7 @@
         };
         # FHS 環境: sandbox 内に /usr/bin/env が無いため、
         # バンドル済みスクリプト (#!/usr/bin/env bash) の実行に必要
-        testFHSRun = pkgs.buildFHSUserEnv {
+        testFHSRun = pkgs.buildFHSEnv {
           name = "test-fhs-run";
           targetPkgs = p: [ p.bash p.coreutils p.gnutar p.gnugrep p.findutils p.patchelf ];
           runScript = "bash";
