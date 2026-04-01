@@ -83,13 +83,19 @@ test-flake:
     #!/usr/bin/env bash
     nix flake check
 
-# Format shell scripts with shfmt
+# Format all source files
 format:
     shfmt -w -bn -ci *.bash lib/*.bash
+    biome format --write src/
 
-# Lint shell scripts with shellcheck
+# Lint all source files
 lint:
     shellcheck -x *.bash lib/*.bash
+    biome check src/
+
+# Type check TypeScript
+typecheck:
+    tsc --noEmit
 
 # Clean test artifacts
 clean:

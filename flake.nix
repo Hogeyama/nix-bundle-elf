@@ -352,6 +352,7 @@
         devShells.default = pkgs.mkShell {
           buildInputs = [
             pkgs.patchelf
+            pkgs.bun
             pkgs.just
             pkgs.gcc
             pkgs.gnutar
@@ -359,6 +360,8 @@
             pkgs.coreutils
             pkgs.shfmt
             pkgs.shellcheck
+            pkgs.typescript
+            pkgs.biome
           ];
         };
         lib = {
