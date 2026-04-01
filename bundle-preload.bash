@@ -341,7 +341,7 @@ cat - "$tmpdir/bundle.tar.gz" >"$output" <<-EOF
 		local dir="\$1"; shift
 		local real_interp="\$dir/lib/${interp_basename}"
 		local tmp="\$(mktemp -d "\${TMPDIR:-/tmp}"/${name}.XXXXXX)"
-		trap 'rm -rf "\$tmp"' EXIT
+		trap 'rm -rf "\$tmp" "\$TEMP"' EXIT
 		cp "\$dir/orig/${name}" "\$tmp/${name}"
 		patch_interp "\$tmp/${name}" "\$real_interp"
 		${add_flags_exec}
@@ -377,6 +377,7 @@ cat - "$tmpdir/bundle.tar.gz" >"$output" <<-EOF
 			exit \\\$?
 		EOF2
 		chmod +x "\$TARGET/bin/${name}"
+		rm -rf "\$TEMP"
 		echo "successfully extracted to \$2"
 		exit 0
 	else
