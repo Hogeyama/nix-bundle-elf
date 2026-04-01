@@ -43,46 +43,46 @@ includes=()
 parse_args() {
 	while (($# > 0)); do
 		case "$1" in
-		-h | --help) usage ;;
-		-o | --output)
-			output="${2:?--output requires an argument}"
-			shift
-			;;
-		--format)
-			if [[ -z "${2:-}" ]]; then
-				echo "Error: format is not specified" >&2
+			-h | --help) usage ;;
+			-o | --output)
+				output="${2:?--output requires an argument}"
+				shift
+				;;
+			--format)
+				if [[ -z "${2:-}" ]]; then
+					echo "Error: format is not specified" >&2
+					exit 1
+				fi
+				if [[ "$2" != "exe" && "$2" != "lambda" ]]; then
+					echo "Error: invalid format: $2" >&2
+					exit 1
+				fi
+				format=$2
+				shift
+				;;
+			--no-nix-locate)
+				use_nix_locate=false
+				;;
+			--add-flag)
+				add_flags+=("${2:?--add-flag requires an argument}")
+				shift
+				;;
+			--include)
+				includes+=("${2:?--include requires an argument}")
+				shift
+				;;
+			-*)
+				echo "Error: unknown option: $1" >&2
 				exit 1
-			fi
-			if [[ "$2" != "exe" && "$2" != "lambda" ]]; then
-				echo "Error: invalid format: $2" >&2
-				exit 1
-			fi
-			format=$2
-			shift
-			;;
-		--no-nix-locate)
-			use_nix_locate=false
-			;;
-		--add-flag)
-			add_flags+=("${2:?--add-flag requires an argument}")
-			shift
-			;;
-		--include)
-			includes+=("${2:?--include requires an argument}")
-			shift
-			;;
-		-*)
-			echo "Error: unknown option: $1" >&2
-			exit 1
-			;;
-		*)
-			if [[ -z "$target" ]]; then
-				target="$1"
-			else
-				echo "Error: unexpected argument: $1" >&2
-				exit 1
-			fi
-			;;
+				;;
+			*)
+				if [[ -z "$target" ]]; then
+					target="$1"
+				else
+					echo "Error: unexpected argument: $1" >&2
+					exit 1
+				fi
+				;;
 		esac
 		shift
 	done
@@ -161,7 +161,10 @@ patch_foreign() {
 		rpath_entries+=("$interp_extra_storepath/lib")
 	fi
 	local rpath
-	rpath=$(IFS=:; echo "${rpath_entries[*]}")
+	rpath=$(
+		IFS=:
+		echo "${rpath_entries[*]}"
+	)
 
 	# Patch a copy of the binary
 	local patched="$tmpdir/patched_$(basename "$target")"
@@ -270,16 +273,16 @@ main() {
 	done
 
 	case "$format" in
-	exe)
-		bundle_exe
-		;;
-	lambda)
-		if [[ ${#add_flags[@]} -gt 0 ]]; then
-			echo "Error: --add-flag is not supported with lambda format" >&2
-			exit 1
-		fi
-		bundle_lambda
-		;;
+		exe)
+			bundle_exe
+			;;
+		lambda)
+			if [[ ${#add_flags[@]} -gt 0 ]]; then
+				echo "Error: --add-flag is not supported with lambda format" >&2
+				exit 1
+			fi
+			bundle_lambda
+			;;
 	esac
 
 	log ""

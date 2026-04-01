@@ -63,32 +63,32 @@ includes=()
 
 while (($# > 0)); do
 	case "$1" in
-	-h | --help) usage ;;
-	-o | --output)
-		output="${2:?--output requires an argument}"
-		shift
-		;;
-	--no-nix-locate) use_nix_locate=false ;;
-	--add-flag)
-		add_flags+=("${2:?--add-flag requires an argument}")
-		shift
-		;;
-	--include)
-		includes+=("${2:?--include requires an argument}")
-		shift
-		;;
-	-*)
-		echo "Error: unknown option: $1" >&2
-		exit 1
-		;;
-	*)
-		if [[ -z "$target" ]]; then
-			target="$1"
-		else
-			echo "Error: unexpected argument: $1" >&2
+		-h | --help) usage ;;
+		-o | --output)
+			output="${2:?--output requires an argument}"
+			shift
+			;;
+		--no-nix-locate) use_nix_locate=false ;;
+		--add-flag)
+			add_flags+=("${2:?--add-flag requires an argument}")
+			shift
+			;;
+		--include)
+			includes+=("${2:?--include requires an argument}")
+			shift
+			;;
+		-*)
+			echo "Error: unknown option: $1" >&2
 			exit 1
-		fi
-		;;
+			;;
+		*)
+			if [[ -z "$target" ]]; then
+				target="$1"
+			else
+				echo "Error: unexpected argument: $1" >&2
+				exit 1
+			fi
+			;;
 	esac
 	shift
 done
