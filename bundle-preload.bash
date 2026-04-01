@@ -345,7 +345,7 @@ cat - "$tmpdir/bundle.tar.gz" >"$output" <<-EOF
 		cp "\$dir/orig/${name}" "\$tmp/${name}"
 		patch_interp "\$tmp/${name}" "\$real_interp"
 		${add_flags_exec}
-		LD_LIBRARY_PATH="\$dir/lib\${LD_LIBRARY_PATH:+:\$LD_LIBRARY_PATH}" LD_PRELOAD="\$dir/lib/cleanup_env.so\${LD_PRELOAD:+:\$LD_PRELOAD}" "\$tmp/${name}" "\${ADD_FLAGS[@]}" "\$@"
+		LD_LIBRARY_PATH="\$dir/lib\${LD_LIBRARY_PATH:+:\$LD_LIBRARY_PATH}" LD_PRELOAD="\$dir/lib/cleanup_env.so\${LD_PRELOAD:+:\$LD_PRELOAD}" "\$tmp/${name}" \${ADD_FLAGS[@]+"\${ADD_FLAGS[@]}"} "\$@"
 		exit \$?
 	}
 	if [[ "\${1:-}" == "--extract" ]]; then

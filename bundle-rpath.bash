@@ -346,7 +346,7 @@ bundle_exe() {
 			cat - >"\$TARGET/bin/${name}" <<-EOF2
 				#!/usr/bin/env bash
 				${add_flags_extract}
-				exec "\$TARGET/orig/${name}" "\${ADD_FLAGS[@]}" "\\\$@"
+				exec "\$TARGET/orig/${name}" \${ADD_FLAGS[@]+"\${ADD_FLAGS[@]}"} "\\\$@"
 			EOF2
 			chmod +x "\$TARGET/bin/${name}"
 			echo "successfully extracted to \$2"
@@ -360,7 +360,7 @@ bundle_exe() {
 			trap 'rm -rf \$TEMP' EXIT
 			patch_interp "\$TEMP/orig/${name}" "\$TEMP/lib/${interpreterb}"
 			${add_flags_exec}
-			"\$TEMP/orig/${name}" "\${ADD_FLAGS[@]}" "\$@"
+			"\$TEMP/orig/${name}" \${ADD_FLAGS[@]+"\${ADD_FLAGS[@]}"} "\$@"
 			exit \$?
 		fi
 		#START_OF_TAR#
