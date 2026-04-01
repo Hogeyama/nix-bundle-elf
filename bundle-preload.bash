@@ -187,8 +187,6 @@ else
 		exit 1
 	fi
 
-	interp_basename="$interp_basename" # set by find_interpreter
-
 	# Copy libraries from resolved store paths
 	for attr in "${!attr_to_storepath[@]}"; do
 		sp="${attr_to_storepath[$attr]}"
@@ -250,6 +248,7 @@ for so in "$tmpdir/out"/lib/*.so*; do
 	# Skip the dynamic linker — patchelf corrupts it
 	case "$(basename "$so")" in ld-linux*) continue ;; esac
 	chmod u+w "$so"
+	# shellcheck disable=SC2016
 	"$PATCHELF" --set-rpath '$ORIGIN' "$so" 2>/dev/null || true
 	chmod u-w "$so"
 done
@@ -293,7 +292,9 @@ for inc in "${includes[@]}"; do
 done
 
 # Serialize add_flags for embedding in heredoc
+# shellcheck disable=SC2016
 add_flags_words_exec=$(serialize_add_flag_words_sh '\$TEMP')
+# shellcheck disable=SC2016
 add_flags_words_extract=$(serialize_add_flag_words_sh '$TARGET')
 
 # Archive

@@ -89,7 +89,7 @@ format:
 
 # Lint shell scripts with shellcheck
 lint:
-    shellcheck *.bash lib/*.bash
+    shellcheck -x *.bash lib/*.bash
 
 # Clean test artifacts
 clean:

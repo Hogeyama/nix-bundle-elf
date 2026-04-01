@@ -167,7 +167,8 @@ patch_foreign() {
 	)
 
 	# Patch a copy of the binary
-	local patched="$tmpdir/patched_$(basename "$target")"
+	local patched
+	patched="$tmpdir/patched_$(basename "$target")"
 	cp "$target" "$patched"
 	chmod +w "$patched"
 	"$PATCHELF" --set-interpreter "$new_interp" "$patched"
@@ -325,7 +326,9 @@ bundle_exe() {
 
 	# serialize add_flags for embedding in heredoc
 	local add_flags_words_exec add_flags_words_extract
+	# shellcheck disable=SC2016
 	add_flags_words_exec=$(serialize_add_flag_words_sh '\$TEMP')
+	# shellcheck disable=SC2016
 	add_flags_words_extract=$(serialize_add_flag_words_sh '\$TARGET')
 
 	# create self-extracting script

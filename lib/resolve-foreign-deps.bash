@@ -10,6 +10,7 @@
 # (use resolve_tool from lib/resolve-tool.bash to obtain these)
 
 RESOLVE_FOREIGN_DEPS_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck disable=SC1091
 source "$RESOLVE_FOREIGN_DEPS_DIR/resolve-tool.bash"
 
 # --- logging ---
@@ -24,6 +25,7 @@ log() { echo "$*" >&2; }
 PREFERRED_ATTRS='^\(glibc\|libgcc\|gcc\|zlib\|openssl\|curl\|xorg\.\|libGL\|libglvnd\|glib\|gtk[34]\|cairo\|pango\|gdk-pixbuf\|dbus\|fontconfig\|freetype\|expat\|libffi\|sqlite\|ncurses\|readline\|xz\|zstd\|bzip2\|pcre2\)\.'
 
 regex_escape() {
+	# shellcheck disable=SC2001
 	sed 's/[.+*?^${}()|\\]/\\&/g' <<<"$1"
 }
 
@@ -124,6 +126,7 @@ build_packages() {
 # Find the dynamic linker (ld-linux) from resolved packages.
 # Uses global: interp_attr, attr_to_storepath, real_needed, lib_to_attr
 # Sets global: new_interp, interp_basename, interp_extra_storepath
+# shellcheck disable=SC2034
 find_interpreter() {
 	new_interp=""
 	interp_basename=""
