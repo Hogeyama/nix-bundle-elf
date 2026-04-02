@@ -119,7 +119,11 @@ export function parseArgs(argv: string[], supportsFormat: boolean): BundleConfig
   const name = basename(config.output);
   config.output = resolve(dirname(config.output), name);
 
-  if (existsSync(config.output)) throw new Error(`${config.output} already exists`);
+  if (existsSync(config.output)) {
+    throw new Error(
+      `Output path '${config.output}' already exists. Use -o to specify a different output path, or remove the existing file first.`,
+    );
+  }
 
   return config;
 }
