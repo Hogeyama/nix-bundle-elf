@@ -122,6 +122,25 @@ to bundle libraries that cannot be discovered by NEEDED/RPATH traversal
 (e.g. libraries loaded at runtime via `dlopen` by code inside a Node.js SEA blob).
 The soname is resolved through the same pipeline as regular NEEDED entries.
 
+### nix-index database
+
+Foreign binary bundling requires a `nix-locate` database. The database is
+resolved in the following order:
+
+1. **`--nix-index-db /path/to/db`** — explicit path to the database file or
+   its parent directory.
+2. **Local cache** — `${XDG_CACHE_HOME:-$HOME/.cache}/nix-index/files`, or
+   the `NIX_INDEX_DATABASE` environment variable.
+3. **Auto-download** — if no local database is found, one is automatically
+   downloaded from
+   [nix-community/nix-index-database](https://github.com/nix-community/nix-index-database)
+   releases into a temporary directory. The download is verified with a
+   SHA-256 checksum.
+
+This means foreign binary bundling works out of the box in CI environments
+(e.g. GitHub Actions) without any extra setup — the database is fetched on
+first use.
+
 ### Running the generated executable
 
 ```bash
@@ -177,8 +196,8 @@ nix develop -c just test
   (e.g., `-o ./copilot`, not `-o ./copilot-bundled`).
 - Dependency discovery for Nix binaries relies on RPATH/RUNPATH. `$ORIGIN`
   entries are not expanded during discovery.
-- Foreign binary resolution requires a `nix-locate` database
-  (`~/.cache/nix-index/files`).
+- Foreign binary resolution requires a `nix-locate` database (auto-downloaded
+  if not present; see [nix-index database](#nix-index-database)).
 - The produced artifact includes glibc and shared libs from your build
   environment. Portability is good in many cases, but not guaranteed if
   the target requires host facilities (e.g., NSS modules, CA certs).

@@ -3,6 +3,8 @@
 import { chmodSync, copyFileSync, existsSync, mkdirSync, realpathSync, statSync } from "node:fs";
 import { basename, dirname, isAbsolute, relative, resolve } from "node:path";
 import { gatherDeps } from "./gather-nix-deps.ts";
+import { setNixLocateDbDir } from "./nix.ts";
+import { resolveNixIndexDb } from "./nix-index-db.ts";
 import * as patchelf from "./patchelf.ts";
 import { buildPackages, findInterpreter, resolveLibs, scanNeeded } from "./resolve-foreign-deps.ts";
 import type { BundleConfig } from "./types.ts";
@@ -83,6 +85,10 @@ export function parseArgs(argv: string[], supportsFormat: boolean): BundleConfig
           config.extraLibs.push(lib);
         }
         break;
+      case "--nix-index-db":
+        config.nixIndexDb = argv[++i] ?? "";
+        if (!config.nixIndexDb) throw new Error("--nix-index-db requires an argument");
+        break;
       default:
         if (arg.startsWith("-")) throw new Error(`unknown option: ${arg}`);
         if (config.target) throw new Error(`unexpected argument: ${arg}`);
@@ -150,6 +156,10 @@ export function gatherAllDeps(config: BundleConfig, tmpdir: string): GatheredDep
           "Use nix-locate to resolve dependencies (remove --no-nix-locate).",
       );
     }
+
+    // Resolve nix-index database before invoking nix-locate
+    const dbDir = resolveNixIndexDb(config.nixIndexDb);
+    setNixLocateDbDir(dbDir);
 
     // Fall back to nix-locate
     target = patchForeign(config.target, tmpdir, config.extraLibs);

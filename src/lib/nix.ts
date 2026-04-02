@@ -3,6 +3,7 @@
 import { resolveTool } from "./resolve-tool.ts";
 
 let nixLocatePath: string | null = null;
+let nixLocateDbDir: string | null = null;
 
 function getNixLocate(): string {
   if (nixLocatePath === null) {
@@ -14,6 +15,11 @@ function getNixLocate(): string {
 /** Override the nix-locate binary path. */
 export function setNixLocatePath(path: string): void {
   nixLocatePath = path;
+}
+
+/** Set the nix-index database directory for nix-locate --db. */
+export function setNixLocateDbDir(dir: string): void {
+  nixLocateDbDir = dir;
 }
 
 function spawnOrThrow(cmd: string[], errorPrefix: string): string {
@@ -41,7 +47,12 @@ export function nixBuild(attr: string): string {
  * Returns raw output lines.
  */
 export function nixLocate(regex: string): string[] {
-  const result = Bun.spawnSync([getNixLocate(), "--minimal", "--at-root", "--regex", regex]);
+  const cmd = [getNixLocate(), "--minimal", "--at-root", "--regex"];
+  if (nixLocateDbDir) {
+    cmd.push("--db", nixLocateDbDir);
+  }
+  cmd.push(regex);
+  const result = Bun.spawnSync(cmd);
   // nix-locate returns exit 0 even with no results; non-zero is a real error
   if (result.exitCode !== 0) {
     return [];
