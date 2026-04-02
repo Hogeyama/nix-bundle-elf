@@ -85,9 +85,9 @@ export function parseArgs(argv: string[], supportsFormat: boolean): BundleConfig
           config.extraLibs.push(lib);
         }
         break;
-      case "--nix-index-db":
-        config.nixIndexDb = argv[++i] ?? "";
-        if (!config.nixIndexDb) throw new Error("--nix-index-db requires an argument");
+      case "--nix-index-db-ref":
+        config.nixIndexDbRef = argv[++i] ?? "";
+        if (!config.nixIndexDbRef) throw new Error("--nix-index-db-ref requires an argument");
         break;
       default:
         if (arg.startsWith("-")) throw new Error(`unknown option: ${arg}`);
@@ -161,12 +161,12 @@ export function gatherAllDeps(config: BundleConfig, tmpdir: string): GatheredDep
       );
     }
 
-    // Resolve nix-index database before invoking nix-locate
-    const dbDir = resolveNixIndexDb(config.nixIndexDb);
-    setNixLocateDbDir(dbDir);
+    // Resolve nix-index database and nixpkgs revision
+    const dbInfo = resolveNixIndexDb(config.nixIndexDbRef);
+    setNixLocateDbDir(dbInfo.dbDir);
 
     // Fall back to nix-locate
-    target = patchForeign(config.target, tmpdir, config.extraLibs);
+    target = patchForeign(config.target, tmpdir, config.extraLibs, dbInfo.nixpkgsRev);
     interpreter = patchelf.printInterpreter(target);
     interpreterBasename = basename(interpreter);
 
@@ -192,7 +192,12 @@ export function gatherAllDeps(config: BundleConfig, tmpdir: string): GatheredDep
 }
 
 /** Patch a foreign (non-Nix) binary to use /nix/store libraries. */
-function patchForeign(target: string, tmpdir: string, extraSonames: string[] = []): string {
+function patchForeign(
+  target: string,
+  tmpdir: string,
+  extraSonames: string[] = [],
+  nixpkgsRev?: string,
+): string {
   log("==> Resolving unresolved dependencies with nix-locate");
   log(`==> Scanning ${target}`);
 
@@ -209,7 +214,7 @@ function patchForeign(target: string, tmpdir: string, extraSonames: string[] = [
   }
 
   log("==> Building packages");
-  const build = buildPackages(resolved);
+  const build = buildPackages(resolved, nixpkgsRev);
 
   const interpInfo = findInterpreter(resolved, build);
   if (!interpInfo) {

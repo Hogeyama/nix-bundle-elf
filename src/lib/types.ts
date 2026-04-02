@@ -10,8 +10,8 @@ export interface BundleConfig {
   includes: Array<{ src: string; dest: string }>;
   /** Extra library sonames to resolve alongside NEEDED entries (e.g. libutil.so.1). */
   extraLibs: string[];
-  /** Explicit path to nix-index database file or directory. */
-  nixIndexDb?: string;
+  /** nix-community/nix-index-database release tag override (e.g. "2026-03-15-045700"). */
+  nixIndexDbRef?: string;
 }
 
 /** Result of gathering shared library dependencies via RPATH/NEEDED traversal. */

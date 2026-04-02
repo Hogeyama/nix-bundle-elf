@@ -87,16 +87,17 @@ export function resolveLibs(scan: ScanResult): ResolveResult {
 }
 
 /** Build resolved nixpkgs attributes and record store paths. */
-export function buildPackages(resolved: ResolveResult): BuildResult {
+export function buildPackages(resolved: ResolveResult, nixpkgsRev?: string): BuildResult {
   const attrToStorePath = new Map<string, string>();
 
   // Collect all unique attrs
   const attrs = new Set(resolved.libToAttr.values());
   if (resolved.interpAttr) attrs.add(resolved.interpAttr);
 
+  const flakePrefix = nixpkgsRev ? `github:NixOS/nixpkgs/${nixpkgsRev}` : "nixpkgs";
   for (const attr of attrs) {
-    log(`  nix build nixpkgs#${attr}`);
-    const storePath = nixBuild(attr);
+    log(`  nix build ${flakePrefix}#${attr}`);
+    const storePath = nixBuild(attr, nixpkgsRev);
     attrToStorePath.set(attr, storePath);
   }
 

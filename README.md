@@ -125,17 +125,14 @@ The soname is resolved through the same pipeline as regular NEEDED entries.
 ### nix-index database
 
 Foreign binary bundling requires a `nix-locate` database. The database is
-resolved in the following order:
+automatically downloaded from
+[nix-community/nix-index-database](https://github.com/nix-community/nix-index-database)
+releases. The nixpkgs revision used for `nix build` is derived from the same
+release tag's `flake.lock`, ensuring the database and built packages are always
+in sync.
 
-1. **`--nix-index-db /path/to/db`** — explicit path to the database file or
-   its parent directory.
-2. **Local cache** — `${XDG_CACHE_HOME:-$HOME/.cache}/nix-index/files`, or
-   the `NIX_INDEX_DATABASE` environment variable.
-3. **Auto-download** — if no local database is found, one is automatically
-   downloaded from
-   [nix-community/nix-index-database](https://github.com/nix-community/nix-index-database)
-   releases into a temporary directory. The download is verified with a
-   SHA-256 checksum.
+Use **`--nix-index-db-ref <tag>`** to specify a different release tag
+(e.g. `--nix-index-db-ref 2026-03-15-045700`).
 
 This means foreign binary bundling works out of the box in CI environments
 (e.g. GitHub Actions) without any extra setup — the database is fetched on

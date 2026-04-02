@@ -33,12 +33,14 @@ function spawnOrThrow(cmd: string[], errorPrefix: string): string {
 
 /**
  * Build a nixpkgs attribute and return its store path.
- * Equivalent to: nix build --no-link --print-out-paths "nixpkgs#$attr"
+ * When nixpkgsRev is provided, uses github:NixOS/nixpkgs/${rev}#${attr}
+ * to ensure the build matches the nix-index database snapshot.
  */
-export function nixBuild(attr: string): string {
+export function nixBuild(attr: string, nixpkgsRev?: string): string {
+  const flakeRef = nixpkgsRev ? `github:NixOS/nixpkgs/${nixpkgsRev}#${attr}` : `nixpkgs#${attr}`;
   return spawnOrThrow(
-    ["nix", "build", "--no-link", "--print-out-paths", `nixpkgs#${attr}`],
-    `nix build nixpkgs#${attr} failed`,
+    ["nix", "build", "--no-link", "--print-out-paths", flakeRef],
+    `nix build ${flakeRef} failed`,
   );
 }
 
