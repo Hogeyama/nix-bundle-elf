@@ -14,11 +14,11 @@
  *      → Child processes launched via execv/execvp (which use environ
  *        internally in glibc) get a clean environment.
  *
- *   2. exec*() wrappers:
+ *   2. exec*()/posix_spawn*() wrappers:
  *      - Self re-exec (detected via /proc/self/exe comparison):
  *        Restores LD_LIBRARY_PATH and LD_PRELOAD so the re-exec'd process
  *        can find its libraries.
- *      - Child process exec with explicit envp:
+ *      - Child process exec/spawn with explicit envp:
  *        Strips LD_LIBRARY_PATH and LD_PRELOAD from the envp.
  *
  * This preserves:
@@ -32,6 +32,7 @@
 #include <dlfcn.h>
 #include <errno.h>
 #include <limits.h>
+#include <spawn.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -46,6 +47,12 @@ static char self_exe[PATH_MAX];
 static int (*real_execve)(const char *, char *const [], char *const []);
 static int (*real_execvp)(const char *, char *const []);
 static int (*real_execvpe)(const char *, char *const [], char *const []);
+static int (*real_posix_spawn)(pid_t *, const char *,
+        const posix_spawn_file_actions_t *, const posix_spawnattr_t *,
+        char *const [], char *const []);
+static int (*real_posix_spawnp)(pid_t *, const char *,
+        const posix_spawn_file_actions_t *, const posix_spawnattr_t *,
+        char *const [], char *const []);
 
 __attribute__((constructor))
 static void cleanup_init(void) {
@@ -69,9 +76,11 @@ static void cleanup_init(void) {
     unsetenv("LD_PRELOAD");
 
     /* Resolve real functions for our wrappers */
-    real_execve  = dlsym(RTLD_NEXT, "execve");
-    real_execvp  = dlsym(RTLD_NEXT, "execvp");
-    real_execvpe = dlsym(RTLD_NEXT, "execvpe");
+    real_execve      = dlsym(RTLD_NEXT, "execve");
+    real_execvp      = dlsym(RTLD_NEXT, "execvp");
+    real_execvpe     = dlsym(RTLD_NEXT, "execvpe");
+    real_posix_spawn = dlsym(RTLD_NEXT, "posix_spawn");
+    real_posix_spawnp = dlsym(RTLD_NEXT, "posix_spawnp");
 }
 
 /* ---------- helpers ---------- */
@@ -236,5 +245,57 @@ int execvpe(const char *file, char *const argv[], char *const envp[]) {
     int e = errno;
     if (new_envp != (char **)envp) free(new_envp);
     errno = e;
+    return ret;
+}
+
+/*
+ * posix_spawn(3) — explicit envp, like execve.
+ */
+int posix_spawn(pid_t *pid, const char *path,
+                const posix_spawn_file_actions_t *file_actions,
+                const posix_spawnattr_t *attrp,
+                char *const argv[], char *const envp[]) {
+    if (!real_posix_spawn) {
+        errno = ENOSYS;
+        return errno;
+    }
+
+    char **new_envp;
+    if (is_self_reexec(path))
+        new_envp = envp_restore(envp);
+    else
+        new_envp = envp_strip(envp);
+
+    if (!new_envp)
+        return ENOMEM;
+
+    int ret = real_posix_spawn(pid, path, file_actions, attrp, argv, new_envp);
+    if (new_envp != (char **)envp) free(new_envp);
+    return ret;
+}
+
+/*
+ * posix_spawnp(3) — PATH resolution + explicit envp.
+ */
+int posix_spawnp(pid_t *pid, const char *file,
+                 const posix_spawn_file_actions_t *file_actions,
+                 const posix_spawnattr_t *attrp,
+                 char *const argv[], char *const envp[]) {
+    if (file && file[0] == '/' && is_self_reexec(file))
+        return posix_spawn(pid, file, file_actions, attrp, argv, envp);
+
+    if (!real_posix_spawnp) {
+        if (file && file[0] == '/')
+            return posix_spawn(pid, file, file_actions, attrp, argv, envp);
+        errno = ENOSYS;
+        return errno;
+    }
+
+    char **new_envp = envp_strip(envp);
+    if (!new_envp)
+        return ENOMEM;
+
+    int ret = real_posix_spawnp(pid, file, file_actions, attrp, argv, new_envp);
+    if (new_envp != (char **)envp) free(new_envp);
     return ret;
 }
