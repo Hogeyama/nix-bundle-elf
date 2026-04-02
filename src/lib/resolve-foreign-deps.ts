@@ -24,10 +24,14 @@ const PREFERRED_ATTR_RE =
   /^(glibc|libgcc|gcc|zlib|openssl[_0-9]*|curl|xorg\.|libGL|libglvnd|glib|gtk[34]|cairo|pango|gdk-pixbuf|dbus|fontconfig|freetype|expat|libffi|sqlite|ncurses|readline|xz|zstd|bzip2|pcre2)\./;
 
 /** Find the nixpkgs attribute that provides a given library. */
-function findLibAttr(libname: string): string | null {
+function findLibAttr(libname: string, extraPreferred?: RegExp): string | null {
   const escaped = regexEscape(libname);
   const results = nixLocate(`/lib/${escaped}$`);
   if (results.length === 0) return null;
+  if (extraPreferred) {
+    const extra = results.find((r) => extraPreferred.test(r));
+    if (extra) return extra;
+  }
   const preferred = results.find((r) => PREFERRED_ATTR_RE.test(r));
   return preferred ?? results[0];
 }
@@ -49,7 +53,12 @@ export function scanNeeded(target: string): ScanResult {
 }
 
 /** Resolve needed libraries to nixpkgs attributes via nix-locate. */
-export function resolveLibs(scan: ScanResult): ResolveResult {
+export function resolveLibs(scan: ScanResult, preferPkgs?: string[]): ResolveResult {
+  const extraPreferred =
+    preferPkgs && preferPkgs.length > 0
+      ? new RegExp(`^(${preferPkgs.map(regexEscape).join("|")})\\.`)
+      : undefined;
+
   const result: ResolveResult = {
     libToAttr: new Map(),
     interpAttr: null,
@@ -57,7 +66,7 @@ export function resolveLibs(scan: ScanResult): ResolveResult {
   };
 
   for (const lib of scan.needed) {
-    const attr = findLibAttr(lib);
+    const attr = findLibAttr(lib, extraPreferred);
     if (attr === null) {
       result.notFound.push(lib);
       log(`  ${lib} -> NOT FOUND`);
@@ -68,7 +77,7 @@ export function resolveLibs(scan: ScanResult): ResolveResult {
   }
 
   if (scan.interpNeeded) {
-    const attr = findLibAttr(scan.interpNeeded);
+    const attr = findLibAttr(scan.interpNeeded, extraPreferred);
     if (attr) {
       log(`  ${scan.interpNeeded} -> ${attr} (interpreter)`);
       result.interpAttr = attr;

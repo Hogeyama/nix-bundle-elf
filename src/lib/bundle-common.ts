@@ -45,6 +45,7 @@ Options:
   --include <src>:<dest>       Include a file or directory in the bundle (repeatable)
   --extra-lib <path>           Add an extra shared library to the bundle (repeatable)
   --add-flag <flag>            Pass an additional flag to nix build (repeatable)
+  --prefer-pkg <prefix>        Prefer this package prefix in nix-locate resolution (repeatable)
   --no-nix-locate              Disable nix-locate for dependency resolution
   --nix-index-db-ref <ref>     Git ref for nix-index-database
   -h, --help                   Show this help message`);
@@ -60,6 +61,7 @@ export function parseArgs(argv: string[], supportsFormat: boolean): BundleConfig
     addFlags: [],
     includes: [],
     extraLibs: [],
+    preferPkgs: [],
   };
 
   let i = 0;
@@ -108,6 +110,13 @@ export function parseArgs(argv: string[], supportsFormat: boolean): BundleConfig
           const lib = argv[++i];
           if (lib === undefined) throw new Error("--extra-lib requires an argument");
           config.extraLibs.push(lib);
+        }
+        break;
+      case "--prefer-pkg":
+        {
+          const pkg = argv[++i];
+          if (pkg === undefined) throw new Error("--prefer-pkg requires an argument");
+          config.preferPkgs.push(pkg);
         }
         break;
       case "--nix-index-db-ref":
@@ -192,7 +201,13 @@ export function gatherAllDeps(config: BundleConfig, tmpdir: string): GatheredDep
     setNixLocateDbDir(dbInfo.dbDir);
 
     // Fall back to nix-locate
-    target = patchForeign(config.target, tmpdir, config.extraLibs, dbInfo.nixpkgsRev);
+    target = patchForeign(
+      config.target,
+      tmpdir,
+      config.extraLibs,
+      dbInfo.nixpkgsRev,
+      config.preferPkgs,
+    );
     interpreter = patchelf.printInterpreter(target);
     interpreterBasename = basename(interpreter);
 
@@ -223,6 +238,7 @@ function patchForeign(
   tmpdir: string,
   extraSonames: string[] = [],
   nixpkgsRev?: string,
+  preferPkgs?: string[],
 ): string {
   log("==> Resolving unresolved dependencies with nix-locate");
   log(`==> Scanning ${target}`);
@@ -234,7 +250,7 @@ function patchForeign(
   }
 
   log("==> Resolving libraries with nix-locate");
-  const resolved = resolveLibs(scan);
+  const resolved = resolveLibs(scan, preferPkgs);
   if (resolved.notFound.length > 0) {
     throw new Error(`could not find packages for: ${resolved.notFound.join(" ")}`);
   }
