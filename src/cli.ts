@@ -20,11 +20,15 @@ switch (command) {
     break;
   default: {
     const prog = "nix-bundle-elf";
-    console.error(`Usage: ${prog} <rpath|preload> [options] <binary>`);
-    console.error("");
-    console.error("Commands:");
-    console.error("  rpath    Bundle using RPATH rewriting");
-    console.error("  preload  Bundle using LD_PRELOAD");
+    console.error(`Usage: ${prog} <command> [options] <binary>
+
+Bundle an ELF binary with all its dependencies into a self-contained package.
+
+Commands:
+  rpath    Bundle using RPATH rewriting (recommended)
+  preload  Bundle using LD_PRELOAD
+
+Run '${prog} <command> --help' for command-specific options.`);
     process.exit(1);
   }
 }

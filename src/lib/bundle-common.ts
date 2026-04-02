@@ -33,6 +33,23 @@ export function makeInterpPlaceholder(): string {
   return placeholder.slice(0, INTERP_PLACEHOLDER_LEN);
 }
 
+function printUsage(supportsFormat: boolean): void {
+  const prog = "nix-bundle-elf";
+  const formatLine = supportsFormat
+    ? "\n  --format <exe|lambda>        Output format (default: exe)"
+    : "";
+  console.error(`Usage: ${prog} <rpath|preload> [options] <binary>
+
+Options:
+  -o, --output <path>          Output path (default: ./<binary-name>)${formatLine}
+  --include <src>:<dest>       Include a file or directory in the bundle (repeatable)
+  --extra-lib <path>           Add an extra shared library to the bundle (repeatable)
+  --add-flag <flag>            Pass an additional flag to nix build (repeatable)
+  --no-nix-locate              Disable nix-locate for dependency resolution
+  --nix-index-db-ref <ref>     Git ref for nix-index-database
+  -h, --help                   Show this help message`);
+}
+
 /** Parse CLI arguments into a BundleConfig. */
 export function parseArgs(argv: string[], supportsFormat: boolean): BundleConfig {
   const config: BundleConfig = {
@@ -51,7 +68,7 @@ export function parseArgs(argv: string[], supportsFormat: boolean): BundleConfig
     switch (arg) {
       case "-h":
       case "--help":
-        // caller handles usage
+        printUsage(supportsFormat);
         process.exit(0);
         break;
       case "-o":
