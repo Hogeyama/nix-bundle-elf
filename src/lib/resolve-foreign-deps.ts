@@ -21,7 +21,7 @@ function regexEscape(s: string): string {
 // Preferred package prefixes — when multiple packages provide the same library,
 // prefer these well-known system packages.
 const PREFERRED_ATTR_RE =
-  /^(glibc|libgcc|gcc|zlib|openssl|curl|xorg\.|libGL|libglvnd|glib|gtk[34]|cairo|pango|gdk-pixbuf|dbus|fontconfig|freetype|expat|libffi|sqlite|ncurses|readline|xz|zstd|bzip2|pcre2)\./;
+  /^(glibc|libgcc|gcc|zlib|openssl[_0-9]*|curl|xorg\.|libGL|libglvnd|glib|gtk[34]|cairo|pango|gdk-pixbuf|dbus|fontconfig|freetype|expat|libffi|sqlite|ncurses|readline|xz|zstd|bzip2|pcre2)\./;
 
 /** Find the nixpkgs attribute that provides a given library. */
 function findLibAttr(libname: string): string | null {
