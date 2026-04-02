@@ -24,6 +24,10 @@ export function gatherDeps(
   // Extra sonames injected by --extra-lib are resolved on the first iteration
   // using the target binary's RPATH, just like its own NEEDED entries.
   const pendingExtras = [...extraSonames];
+  // The root binary's RPATH is used as a fallback for transitive dependencies,
+  // mirroring how the dynamic linker searches the executable's RPATH for all
+  // libraries in the dependency tree.
+  const rootRpaths = printRpath(target);
 
   while (queue.length > 0) {
     const current = queue.shift() as string;
@@ -41,11 +45,21 @@ export function gatherDeps(
       if (libname === interpreterBasename) continue;
 
       let found: string | null = null;
+      // Search current library's RPATH first, then fall back to root binary's RPATH
       for (const rp of currentRpaths) {
         const candidate = `${rp}/${libname}`;
         if (existsSync(candidate)) {
           found = candidate;
           break;
+        }
+      }
+      if (found === null) {
+        for (const rp of rootRpaths) {
+          const candidate = `${rp}/${libname}`;
+          if (existsSync(candidate)) {
+            found = candidate;
+            break;
+          }
         }
       }
 
