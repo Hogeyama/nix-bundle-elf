@@ -108,7 +108,7 @@ Bundles using LD_PRELOAD instead of RPATH rewriting.
 ```bash
 bun run ./src/cli.ts preload ~/.local/bin/copilot -o ./copilot
 
-# Bundle extra libraries needed by indirect dlopen dependencies (e.g. Node.js SEA native addons)
+# Bundle extra libraries needed by indirect dlopen dependencies
 bun run ./src/cli.ts preload --extra-lib libutil.so.1 ~/.local/bin/copilot -o ./copilot
 ```
 
@@ -119,7 +119,7 @@ and `%%` escapes a literal `%`.
 
 The `preload` command additionally accepts repeatable `--extra-lib <soname>`
 to bundle libraries that cannot be discovered by NEEDED/RPATH traversal
-(e.g. libraries loaded at runtime via `dlopen` by code inside a Node.js SEA blob).
+(e.g. libraries loaded at runtime via `dlopen`).
 The soname is resolved through the same pipeline as regular NEEDED entries.
 
 ### nix-index database
@@ -171,7 +171,7 @@ first use.
 3. Sets only the interpreter to a placeholder (no `--set-rpath` on the binary).
 4. Compiles `cleanup_env.so` for `LD_PRELOAD`, which:
    - Saves and removes `LD_LIBRARY_PATH`/`LD_PRELOAD` from environ on startup.
-   - Restores them on self re-exec (Node.js SEA), strips them for child processes.
+   - Restores them on self re-exec, strips them for child processes.
 5. Creates a self-extracting script. Each invocation copies the binary to a temp dir,
    patches the interpreter copy via `dd`, and runs with `LD_LIBRARY_PATH` + `LD_PRELOAD`.
 
@@ -191,9 +191,6 @@ nix develop -c just test
 
 ## Limitations
 
-- **Node.js SEA**: SEA binaries depend on `argv[0]` matching the original
-  filename. The output file name (`-o`) must match the original binary name
-  (e.g., `-o ./copilot`, not `-o ./copilot-bundled`).
 - Dependency discovery for Nix binaries relies on RPATH/RUNPATH. `$ORIGIN`
   entries are not expanded during discovery.
 - Foreign binary resolution requires a `nix-locate` database (auto-downloaded
