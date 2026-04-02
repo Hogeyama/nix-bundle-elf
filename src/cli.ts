@@ -18,11 +18,13 @@ switch (command) {
   case "preload":
     bundlePreload(rest);
     break;
-  default:
-    console.error(`Usage: cli.ts <rpath|preload> [options] <binary>`);
+  default: {
+    const prog = "nix-bundle-elf";
+    console.error(`Usage: ${prog} <rpath|preload> [options] <binary>`);
     console.error("");
     console.error("Commands:");
     console.error("  rpath    Bundle using RPATH rewriting");
     console.error("  preload  Bundle using LD_PRELOAD");
     process.exit(1);
+  }
 }

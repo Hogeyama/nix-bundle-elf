@@ -119,6 +119,27 @@
       in
       {
         packages = {
+          default = pkgs.stdenv.mkDerivation {
+            pname = "nix-bundle-elf";
+            version = "0.1.0";
+            src = ./.;
+            nativeBuildInputs = [ pkgs.bun pkgs.makeWrapper ];
+            dontStrip = true;
+            buildPhase = ''
+              runHook preBuild
+              export HOME=$(mktemp -d)
+              bun build --compile src/cli.ts --outfile nix-bundle-elf
+              runHook postBuild
+            '';
+            installPhase = ''
+              runHook preInstall
+              mkdir -p $out/bin
+              cp nix-bundle-elf $out/bin/nix-bundle-elf
+              wrapProgram $out/bin/nix-bundle-elf \
+                --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.patchelf pkgs.gnutar pkgs.gcc ]}
+              runHook postInstall
+            '';
+          };
           example-single-exe = self.lib.${system}.single-exe {
             inherit pkgs;
             name = "example";

@@ -3,13 +3,12 @@
 import {
   chmodSync,
   copyFileSync,
-  existsSync,
   mkdirSync,
   readdirSync,
   readFileSync,
   writeFileSync,
 } from "node:fs";
-import { basename, dirname } from "node:path";
+import { basename } from "node:path";
 import { createTarGz } from "../lib/archive.ts";
 import {
   copyIncludes,
@@ -18,6 +17,7 @@ import {
   parseArgs,
   setPlaceholderInterpreter,
 } from "../lib/bundle-common.ts";
+import { CLEANUP_ENV_C } from "../lib/cleanup-env-source.ts";
 import * as patchelf from "../lib/patchelf.ts";
 import { resolveTool } from "../lib/resolve-tool.ts";
 import { generatePreloadScript } from "../lib/shell-template.ts";
@@ -86,11 +86,9 @@ export function bundlePreload(argv: string[]): void {
     }
 
     // Compile cleanup_env.so
-    const scriptDir = dirname(dirname(__dirname));
-    const cleanupEnvSrc = `${scriptDir}/cleanup_env.c`;
-    if (!existsSync(cleanupEnvSrc)) {
-      throw new Error(`cleanup_env.c not found at ${cleanupEnvSrc}`);
-    }
+    // Write the embedded source to a temp file for gcc.
+    const cleanupEnvSrc = `${tmpdir}/cleanup_env.c`;
+    writeFileSync(cleanupEnvSrc, CLEANUP_ENV_C);
 
     log("  Compiling cleanup_env.so");
     const gcc = resolveTool("", "gcc", "gcc");
