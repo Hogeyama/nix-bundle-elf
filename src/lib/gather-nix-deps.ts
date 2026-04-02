@@ -14,9 +14,16 @@ import type { GatherResult } from "./types.ts";
  * Recursively gather shared library dependencies by traversing NEEDED and RPATH.
  * Returns null if any library cannot be resolved (caller should fall back to nix-locate).
  */
-export function gatherDeps(target: string, interpreterBasename: string): GatherResult | null {
+export function gatherDeps(
+  target: string,
+  interpreterBasename: string,
+  extraSonames: string[] = [],
+): GatherResult | null {
   const visited = new Set<string>();
   const queue: string[] = [target];
+  // Extra sonames injected by --extra-lib are resolved on the first iteration
+  // using the target binary's RPATH, just like its own NEEDED entries.
+  const pendingExtras = [...extraSonames];
 
   while (queue.length > 0) {
     const current = queue.shift() as string;
@@ -24,6 +31,10 @@ export function gatherDeps(target: string, interpreterBasename: string): GatherR
     visited.add(current);
 
     const needed = printNeeded(current);
+    if (pendingExtras.length > 0) {
+      needed.push(...pendingExtras);
+      pendingExtras.length = 0;
+    }
     const currentRpaths = printRpath(current);
 
     for (const libname of needed) {

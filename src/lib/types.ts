@@ -8,6 +8,8 @@ export interface BundleConfig {
   useNixLocate: boolean;
   addFlags: string[];
   includes: Array<{ src: string; dest: string }>;
+  /** Extra library sonames to resolve alongside NEEDED entries (e.g. libutil.so.1). */
+  extraLibs: string[];
 }
 
 /** Result of gathering shared library dependencies via RPATH/NEEDED traversal. */

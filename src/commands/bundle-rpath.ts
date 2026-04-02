@@ -20,6 +20,9 @@ function log(msg: string): void {
 
 export function bundleRpath(argv: string[]): void {
   const config = parseArgs(argv, true);
+  if (config.extraLibs.length > 0) {
+    throw new Error("--extra-lib is not supported with rpath strategy (use preload instead)");
+  }
   const name = basename(config.output);
 
   // Create workdir

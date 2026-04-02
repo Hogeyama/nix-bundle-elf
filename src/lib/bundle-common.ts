@@ -32,6 +32,7 @@ export function parseArgs(argv: string[], supportsFormat: boolean): BundleConfig
     useNixLocate: true,
     addFlags: [],
     includes: [],
+    extraLibs: [],
   };
 
   let i = 0;
@@ -73,6 +74,13 @@ export function parseArgs(argv: string[], supportsFormat: boolean): BundleConfig
           const colonIdx = inc.indexOf(":");
           if (colonIdx === -1) throw new Error(`--include format must be src:dest, got: ${inc}`);
           config.includes.push({ src: inc.slice(0, colonIdx), dest: inc.slice(colonIdx + 1) });
+        }
+        break;
+      case "--extra-lib":
+        {
+          const lib = argv[++i];
+          if (lib === undefined) throw new Error("--extra-lib requires an argument");
+          config.extraLibs.push(lib);
         }
         break;
       default:
@@ -132,7 +140,7 @@ export function gatherAllDeps(config: BundleConfig, tmpdir: string): GatheredDep
   let interpreter = patchelf.printInterpreter(target);
   let interpreterBasename = basename(interpreter);
 
-  const result = gatherDeps(target, interpreterBasename);
+  const result = gatherDeps(target, interpreterBasename, config.extraLibs);
 
   if (result === null) {
     log("  RPATH-only resolution was insufficient");
@@ -144,11 +152,11 @@ export function gatherAllDeps(config: BundleConfig, tmpdir: string): GatheredDep
     }
 
     // Fall back to nix-locate
-    target = patchForeign(config.target, tmpdir);
+    target = patchForeign(config.target, tmpdir, config.extraLibs);
     interpreter = patchelf.printInterpreter(target);
     interpreterBasename = basename(interpreter);
 
-    const retryResult = gatherDeps(target, interpreterBasename);
+    const retryResult = gatherDeps(target, interpreterBasename, config.extraLibs);
     if (retryResult === null) {
       throw new Error("dependency resolution failed even after nix-locate patching");
     }
@@ -170,11 +178,12 @@ export function gatherAllDeps(config: BundleConfig, tmpdir: string): GatheredDep
 }
 
 /** Patch a foreign (non-Nix) binary to use /nix/store libraries. */
-function patchForeign(target: string, tmpdir: string): string {
+function patchForeign(target: string, tmpdir: string, extraSonames: string[] = []): string {
   log("==> Resolving unresolved dependencies with nix-locate");
   log(`==> Scanning ${target}`);
 
   const scan = scanNeeded(target);
+  scan.needed.push(...extraSonames);
   if (scan.needed.length === 0 && !scan.interpNeeded) {
     throw new Error("no dynamic dependencies found. Is this a static binary?");
   }

@@ -107,12 +107,20 @@ Bundles using LD_PRELOAD instead of RPATH rewriting.
 
 ```bash
 bun run ./src/cli.ts preload ~/.local/bin/copilot -o ./copilot
+
+# Bundle extra libraries needed by indirect dlopen dependencies (e.g. Node.js SEA native addons)
+bun run ./src/cli.ts preload --extra-lib libutil.so.1 ~/.local/bin/copilot -o ./copilot
 ```
 
 Both CLI commands accept repeatable `--include <src>:<dest>` and
 `--add-flag <arg>` options. `--add-flag` arguments are inserted before
 user arguments, `%ROOT` expands to the extracted bundle root at runtime,
 and `%%` escapes a literal `%`.
+
+The `preload` command additionally accepts repeatable `--extra-lib <soname>`
+to bundle libraries that cannot be discovered by NEEDED/RPATH traversal
+(e.g. libraries loaded at runtime via `dlopen` by code inside a Node.js SEA blob).
+The soname is resolved through the same pipeline as regular NEEDED entries.
 
 ### Running the generated executable
 
