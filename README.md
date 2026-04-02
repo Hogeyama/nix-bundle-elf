@@ -74,42 +74,42 @@ Builds a Lambda-compatible zip with `bootstrap` and bundled libraries.
 
 ## CLI Usage
 
-The repository's maintained CLI entry point is `src/cli.ts`:
+Build the CLI with `nix build .#default`, then:
 
 ```bash
-bun run ./src/cli.ts <rpath|preload> [options] <binary>
+nix-bundle-elf <rpath|preload> [options] <binary>
 ```
 
-### `bun run ./src/cli.ts rpath`
+### `nix-bundle-elf rpath`
 
 Bundles using RPATH rewriting. Supports both Nix and foreign binaries.
 
 ```bash
 # Nix binary
-bun run ./src/cli.ts rpath /nix/store/...-curl-*/bin/curl -o ./curl-bundled
+nix-bundle-elf rpath /nix/store/...-curl-*/bin/curl -o ./curl-bundled
 
 # Foreign binary (auto-resolves deps via nix-locate)
-bun run ./src/cli.ts rpath ./some-foreign-binary -o ./my-app
+nix-bundle-elf rpath ./some-foreign-binary -o ./my-app
 
 # Bundle an extra config file and inject runtime flags
-bun run ./src/cli.ts rpath /nix/store/...-hl-*/bin/hl -o ./hl \
+nix-bundle-elf rpath /nix/store/...-hl-*/bin/hl -o ./hl \
   --include ./config.yaml:conf/config.yaml \
   --add-flag '--config' \
   --add-flag '%ROOT/conf/config.yaml'
 
 # Lambda zip
-bun run ./src/cli.ts rpath /nix/store/...-curl-*/bin/curl --format lambda -o ./function.zip
+nix-bundle-elf rpath /nix/store/...-curl-*/bin/curl --format lambda -o ./function.zip
 ```
 
-### `bun run ./src/cli.ts preload`
+### `nix-bundle-elf preload`
 
 Bundles using LD_PRELOAD instead of RPATH rewriting.
 
 ```bash
-bun run ./src/cli.ts preload ~/.local/bin/copilot -o ./copilot
+nix-bundle-elf preload ~/.local/bin/copilot -o ./copilot
 
 # Bundle extra libraries needed by indirect dlopen dependencies
-bun run ./src/cli.ts preload --extra-lib libutil.so.1 ~/.local/bin/copilot -o ./copilot
+nix-bundle-elf preload --extra-lib libutil.so.1 ~/.local/bin/copilot -o ./copilot
 ```
 
 Both CLI commands accept repeatable `--include <src>:<dest>` and
