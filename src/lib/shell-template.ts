@@ -56,8 +56,8 @@ if [ "\${1:-}" = "--extract" ]; then
 \t\techo "Error: $2 already exists"
 \t\texit 1
 \tfi
-\tTARGET=$(realpath "$2")
-\tmkdir -p "$TARGET"
+\tmkdir -p "$2"
+\tTARGET=$(cd "$2" && pwd)
 \ttar -C "$TARGET" -xzf "$TEMP/self.tar.gz" || exit 1
 \tpatch_interp "$TARGET/orig/"${nameLiteral} "$TARGET/lib/"${interpreterLiteral}
 \tmkdir -p "$TARGET/bin"
@@ -130,8 +130,8 @@ if [ "\${1:-}" = "--extract" ]; then
 \t\techo "Error: $2 already exists"
 \t\texit 1
 \tfi
-\tTARGET=$(realpath "$2")
-\tmkdir -p "$TARGET"
+\tmkdir -p "$2"
+\tTARGET=$(cd "$2" && pwd)
 \ttar -C "$TARGET" -xzf "$TEMP/self.tar.gz" || exit 1
 \tmkdir -p "$TARGET/bin"
 \tcat - >"$TARGET/bin/"${nameLiteral} <<-EOF2
