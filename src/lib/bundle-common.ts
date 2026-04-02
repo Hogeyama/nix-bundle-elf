@@ -1,6 +1,14 @@
 // Common logic shared between bundle-rpath and bundle-preload.
 
-import { chmodSync, copyFileSync, existsSync, mkdirSync, realpathSync, statSync } from "node:fs";
+import {
+  chmodSync,
+  copyFileSync,
+  cpSync,
+  existsSync,
+  mkdirSync,
+  realpathSync,
+  statSync,
+} from "node:fs";
 import { basename, dirname, isAbsolute, relative, resolve } from "node:path";
 import { gatherDeps } from "./gather-nix-deps.ts";
 import { setNixLocateDbDir } from "./nix.ts";
@@ -104,8 +112,9 @@ export function parseArgs(argv: string[], supportsFormat: boolean): BundleConfig
 
   for (const include of config.includes) {
     include.src = realpathSync(include.src);
-    if (!statSync(include.src).isFile()) {
-      throw new Error(`--include source must be a file: ${include.src}`);
+    const st = statSync(include.src);
+    if (!st.isFile() && !st.isDirectory()) {
+      throw new Error(`--include source must be a file or directory: ${include.src}`);
     }
     if (include.dest === "") {
       throw new Error("--include destination must not be empty");
@@ -245,7 +254,7 @@ function patchForeign(
   return patched;
 }
 
-/** Copy --include files into the bundle output directory. */
+/** Copy --include files/directories into the bundle output directory. */
 export function copyIncludes(includes: Array<{ src: string; dest: string }>, outDir: string): void {
   const bundleRoot = resolve(outDir);
   for (const { src, dest } of includes) {
@@ -254,8 +263,12 @@ export function copyIncludes(includes: Array<{ src: string; dest: string }>, out
     if (rel.startsWith("..") || isAbsolute(rel)) {
       throw new Error(`--include destination escapes bundle root: ${dest}`);
     }
-    mkdirSync(dirname(destPath), { recursive: true });
-    copyFileSync(src, destPath);
+    if (statSync(src).isDirectory()) {
+      cpSync(src, destPath, { recursive: true });
+    } else {
+      mkdirSync(dirname(destPath), { recursive: true });
+      copyFileSync(src, destPath);
+    }
   }
 }
 
