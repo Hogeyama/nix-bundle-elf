@@ -1,4 +1,10 @@
 {
+  "scripts": {
+    "fmt": "biome check --write .",
+    "lint": "biome check .",
+    "typecheck": "bun run tsc --noEmit",
+    "check": "bun run lint && bun run typecheck"
+  },
   "dependencies": {},
   "devDependencies": {
     "@types/bun": "^1.3.11"
