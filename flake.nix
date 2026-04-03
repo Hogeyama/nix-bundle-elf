@@ -45,12 +45,14 @@
         if type == "rpath" then
           pkgs.runCommandCC name { buildInputs = [ pkgs.bun pkgs.patchelf pkgs.gnutar ]; }
             ''
-              bun run ${./.}/src/cli.ts rpath --no-nix-locate --format exe -o $out${includeArgs}${addFlagArgs} ${target}
+              bun run ${./.}/src/cli.ts rpath --no-nix-locate --format exe -o "$TMPDIR/${name}"${includeArgs}${addFlagArgs} ${target}
+              mv "$TMPDIR/${name}" $out
             ''
         else
           pkgs.runCommandCC name { buildInputs = [ pkgs.bun pkgs.patchelf pkgs.gnutar ]; }
             ''
-              bun run ${./.}/src/cli.ts preload --no-nix-locate -o $out${includeArgs}${addFlagArgs} ${target}
+              bun run ${./.}/src/cli.ts preload --no-nix-locate -o "$TMPDIR/${name}"${includeArgs}${addFlagArgs} ${target}
+              mv "$TMPDIR/${name}" $out
             '';
 
       aws-lambda-zip =
