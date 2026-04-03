@@ -103,20 +103,10 @@
         };
         test-add-flag-preload-space = self.lib.${system}.single-exe {
           inherit pkgs;
-          name = "python3";
-          target = "${pkgs.python3}/bin/python3";
+          name = "expr";
+          target = "${pkgs.coreutils}/bin/expr";
           type = "preload";
-          addFlags = [
-            "-c"
-            "import sys; print(repr(sys.argv[0]))"
-            "foo bar"
-          ];
-        };
-        # FHS 環境: sandbox 内で自己展開ラッパーを実行するために使う
-        testFHSRun = pkgs.buildFHSEnv {
-          name = "test-fhs-run";
-          targetPkgs = p: [ p.bash p.coreutils p.gnutar p.gnugrep p.findutils p.patchelf ];
-          runScript = "bash";
+          addFlags = [ "length" "foo bar" ];
         };
       in
       {
@@ -158,13 +148,11 @@
           single-exe-run = pkgs.runCommand "check-single-exe-run"
             { }
             ''
-              ${testFHSRun}/bin/test-fhs-run -c '
-                output=$(${test-single-exe} -- --version)
-                echo "$output"
-                echo "$output" | grep -q "curl"
-                echo "$output" | grep -q "libcurl"
-                echo "PASS: single-exe-run"
-              '
+              output=$(${test-single-exe} -- --version)
+              echo "$output"
+              echo "$output" | grep -q "curl"
+              echo "$output" | grep -q "libcurl"
+              echo "PASS: single-exe-run"
               mkdir -p $out
             '';
 
@@ -172,60 +160,56 @@
           single-exe-extract = pkgs.runCommand "check-single-exe-extract"
             { }
             ''
-              ${testFHSRun}/bin/test-fhs-run -c '
-                extractdir="$TMPDIR/extracted"
-                ${test-single-exe} --extract "$extractdir"
+              extractdir="$TMPDIR/extracted"
+              ${test-single-exe} --extract "$extractdir"
 
-                # ラッパースクリプトの存在と実行
-                test -x "$extractdir/bin/curl"
-                output=$("$extractdir/bin/curl" --version)
-                echo "$output"
-                echo "$output" | grep -q "curl"
+              # ラッパースクリプトの存在と実行
+              test -x "$extractdir/bin/curl"
+              output=$("$extractdir/bin/curl" --version)
+              echo "$output"
+              echo "$output" | grep -q "curl"
 
-                # オリジナルバイナリの存在
-                test -f "$extractdir/orig/curl"
+              # オリジナルバイナリの存在
+              test -f "$extractdir/orig/curl"
 
-                # transitive な依存ライブラリの存在確認
-                # curl -> libcurl -> libssl/libcrypto, libz
-                ls "$extractdir/lib/"
-                test -n "$(find "$extractdir/lib" -name "libcurl.so*" -print -quit)"
-                test -n "$(find "$extractdir/lib" -name "libz.so*" -o -name "libzstd.so*" -print -quit)"
+              # transitive な依存ライブラリの存在確認
+              # curl -> libcurl -> libssl/libcrypto, libz
+              ls "$extractdir/lib/"
+              test -n "$(find "$extractdir/lib" -name "libcurl.so*" -print -quit)"
+              test -n "$(find "$extractdir/lib" -name "libz.so*" -o -name "libzstd.so*" -print -quit)"
 
-                # .so の数が十分あること（curl は通常 10+ の依存を持つ）
-                so_count=$(find "$extractdir/lib" -name "*.so*" | wc -l)
-                echo "Found $so_count shared libraries"
-                [ "$so_count" -ge 5 ]
+              # .so の数が十分あること（curl は通常 10+ の依存を持つ）
+              so_count=$(find "$extractdir/lib" -name "*.so*" | wc -l)
+              echo "Found $so_count shared libraries"
+              [ "$so_count" -ge 5 ]
 
-                echo "PASS: single-exe-extract"
-              '
+              echo "PASS: single-exe-extract"
               mkdir -p $out
             '';
 
           # 展開後のバイナリ・ライブラリの RPATH が正しく設定されていることを確認
           single-exe-extract-rpath = pkgs.runCommand "check-single-exe-extract-rpath"
-            { }
+            { nativeBuildInputs = [ pkgs.patchelf ]; }
             ''
-              ${testFHSRun}/bin/test-fhs-run -c '
-                extractdir="$TMPDIR/extracted"
-                ${test-single-exe} --extract "$extractdir"
+              extractdir="$TMPDIR/extracted"
+              ${test-single-exe} --extract "$extractdir"
 
-                # orig/curl の RUNPATH が $ORIGIN/../lib であること
-                rpath=$(patchelf --print-rpath "$extractdir/orig/curl")
-                echo "orig/curl RPATH: $rpath"
-                echo "$rpath" | grep -q "\$ORIGIN/../lib"
+              # orig/curl の RUNPATH が $ORIGIN/../lib であること
+              rpath=$(patchelf --print-rpath "$extractdir/orig/curl")
+              echo "orig/curl RPATH: $rpath"
+              echo "$rpath" | grep -q "\$ORIGIN/../lib"
 
-                # lib/ 内の各 .so の RUNPATH が $ORIGIN であること
-                # ただし ld-linux（インタープリタ）は除く
-                for lib in "$extractdir/lib/"*.so*; do
-                  libb=$(basename "$lib")
-                  case "$libb" in ld-linux*) continue ;; esac
-                  rpath=$(patchelf --print-rpath "$lib")
-                  echo "$libb RPATH: $rpath"
-                  echo "$rpath" | grep -q "\$ORIGIN"
-                done
+              # lib/ 内の各 .so の RUNPATH が $ORIGIN であること
+              # ただし ld-linux（インタープリタ）は除く
+              for lib in "$extractdir/lib/"*.so*; do
+                libb=$(basename "$lib")
+                case "$libb" in ld-linux*) continue ;; esac
+                rpath=$(patchelf --print-rpath "$lib")
+                echo "$libb RPATH: $rpath"
+                echo "$rpath" | grep -q "\$ORIGIN"
+              done
 
-                echo "PASS: single-exe-extract-rpath"
-              '
+              echo "PASS: single-exe-extract-rpath"
               mkdir -p $out
             '';
 
@@ -233,13 +217,11 @@
           single-exe-preload-run = pkgs.runCommand "check-single-exe-preload-run"
             { }
             ''
-              ${testFHSRun}/bin/test-fhs-run -c '
-                output=$(${test-single-exe-preload} -- --version)
-                echo "$output"
-                echo "$output" | grep -q "curl"
-                echo "$output" | grep -q "libcurl"
-                echo "PASS: single-exe-preload-run"
-              '
+              output=$(${test-single-exe-preload} -- --version)
+              echo "$output"
+              echo "$output" | grep -q "curl"
+              echo "$output" | grep -q "libcurl"
+              echo "PASS: single-exe-preload-run"
               mkdir -p $out
             '';
 
@@ -247,99 +229,86 @@
           single-exe-preload-extract = pkgs.runCommand "check-single-exe-preload-extract"
             { }
             ''
-              ${testFHSRun}/bin/test-fhs-run -c '
-                extractdir="$TMPDIR/extracted"
-                ${test-single-exe-preload} --extract "$extractdir"
+              extractdir="$TMPDIR/extracted"
+              ${test-single-exe-preload} --extract "$extractdir"
 
-                # ラッパースクリプトの存在と実行
-                test -x "$extractdir/bin/curl"
-                output=$("$extractdir/bin/curl" --version)
-                echo "$output"
-                echo "$output" | grep -q "curl"
+              # ラッパースクリプトの存在と実行
+              test -x "$extractdir/bin/curl"
+              output=$("$extractdir/bin/curl" --version)
+              echo "$output"
+              echo "$output" | grep -q "curl"
 
-                # cleanup_env.so の存在確認
-                test -f "$extractdir/lib/cleanup_env.so"
+              # cleanup_env.so の存在確認
+              test -f "$extractdir/lib/cleanup_env.so"
 
-                # transitive な依存ライブラリの存在確認
-                ls "$extractdir/lib/"
-                test -n "$(find "$extractdir/lib" -name "libcurl.so*" -print -quit)"
-                test -n "$(find "$extractdir/lib" -name "libz.so*" -o -name "libzstd.so*" -print -quit)"
+              # transitive な依存ライブラリの存在確認
+              ls "$extractdir/lib/"
+              test -n "$(find "$extractdir/lib" -name "libcurl.so*" -print -quit)"
+              test -n "$(find "$extractdir/lib" -name "libz.so*" -o -name "libzstd.so*" -print -quit)"
 
-                so_count=$(find "$extractdir/lib" -name "*.so*" | wc -l)
-                echo "Found $so_count shared libraries"
-                [ "$so_count" -ge 5 ]
+              so_count=$(find "$extractdir/lib" -name "*.so*" | wc -l)
+              echo "Found $so_count shared libraries"
+              [ "$so_count" -ge 5 ]
 
-                echo "PASS: single-exe-preload-extract"
-              '
+              echo "PASS: single-exe-preload-extract"
               mkdir -p $out
             '';
 
           add-flag-rpath-run = pkgs.runCommand "check-add-flag-rpath-run"
             { }
             ''
-              ${testFHSRun}/bin/test-fhs-run -c '
-                output=$(${test-add-flag-rpath} --)
-                echo "$output"
-                echo "$output" | grep -q "BUNDLED_CONTENT_OK"
-                echo "PASS: add-flag-rpath-run"
-              '
+              output=$(${test-add-flag-rpath} --)
+              echo "$output"
+              echo "$output" | grep -q "BUNDLED_CONTENT_OK"
+              echo "PASS: add-flag-rpath-run"
               mkdir -p $out
             '';
 
           add-flag-rpath-extract = pkgs.runCommand "check-add-flag-rpath-extract"
             { }
             ''
-              ${testFHSRun}/bin/test-fhs-run -c '
-                extractdir="$TMPDIR/extracted"
-                ${test-add-flag-rpath} --extract "$extractdir"
-                test -f "$extractdir/test/foo"
-                output=$("$extractdir/bin/cat")
-                echo "$output"
-                echo "$output" | grep -q "BUNDLED_CONTENT_OK"
-                echo "PASS: add-flag-rpath-extract"
-              '
+              extractdir="$TMPDIR/extracted"
+              ${test-add-flag-rpath} --extract "$extractdir"
+              test -f "$extractdir/test/foo"
+              output=$("$extractdir/bin/cat")
+              echo "$output"
+              echo "$output" | grep -q "BUNDLED_CONTENT_OK"
+              echo "PASS: add-flag-rpath-extract"
               mkdir -p $out
             '';
 
           add-flag-preload-run = pkgs.runCommand "check-add-flag-preload-run"
             { }
             ''
-              ${testFHSRun}/bin/test-fhs-run -c '
-                output=$(${test-add-flag-preload} --)
-                echo "$output"
-                echo "$output" | grep -q "BUNDLED_CONTENT_OK"
-                echo "PASS: add-flag-preload-run"
-              '
+              output=$(${test-add-flag-preload} --)
+              echo "$output"
+              echo "$output" | grep -q "BUNDLED_CONTENT_OK"
+              echo "PASS: add-flag-preload-run"
               mkdir -p $out
             '';
 
           add-flag-preload-extract = pkgs.runCommand "check-add-flag-preload-extract"
             { }
             ''
-              ${testFHSRun}/bin/test-fhs-run -c '
-                extractdir="$TMPDIR/extracted"
-                ${test-add-flag-preload} --extract "$extractdir"
-                test -f "$extractdir/test/foo"
-                output=$("$extractdir/bin/cat")
-                echo "$output"
-                echo "$output" | grep -q "BUNDLED_CONTENT_OK"
-                echo "PASS: add-flag-preload-extract"
-              '
+              extractdir="$TMPDIR/extracted"
+              ${test-add-flag-preload} --extract "$extractdir"
+              test -f "$extractdir/test/foo"
+              output=$("$extractdir/bin/cat")
+              echo "$output"
+              echo "$output" | grep -q "BUNDLED_CONTENT_OK"
+              echo "PASS: add-flag-preload-extract"
               mkdir -p $out
             '';
 
           add-flag-preload-extract-space = pkgs.runCommand "check-add-flag-preload-extract-space"
             { }
             ''
-              ${testFHSRun}/bin/test-fhs-run -c '
-                extractdir="$TMPDIR/extracted"
-                ${test-add-flag-preload-space} --extract "$extractdir"
-                output=$("$extractdir/bin/python3")
-                expected=$(printf "\\047foo bar\\047")
-                echo "$output"
-                test "$output" = "$expected"
-                echo "PASS: add-flag-preload-extract-space"
-              '
+              extractdir="$TMPDIR/extracted"
+              ${test-add-flag-preload-space} --extract "$extractdir"
+              output=$("$extractdir/bin/expr")
+              echo "$output"
+              test "$output" = "7"
+              echo "PASS: add-flag-preload-extract-space"
               mkdir -p $out
             '';
 
