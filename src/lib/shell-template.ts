@@ -20,8 +20,8 @@ interface PreloadTemplateParams {
 
 /** Generate the self-extracting script for rpath bundles. */
 export function generateRpathScript(p: RpathTemplateParams): string {
-  const addFlagsExec = serializeAddFlagWordsSh(p.addFlags, "\\$TEMP");
-  const addFlagsExtract = serializeAddFlagWordsSh(p.addFlags, "\\$TARGET");
+  const addFlagsExec = serializeAddFlagWordsSh(p.addFlags, "$TEMP");
+  const addFlagsExtract = serializeAddFlagWordsSh(p.addFlags, "$TARGET");
   const nameLiteral = quoteShLiteral(p.name);
   const interpreterLiteral = quoteShLiteral(p.interpreterBasename);
 
@@ -85,7 +85,7 @@ fi
 
 /** Generate the self-extracting script for preload bundles. */
 export function generatePreloadScript(p: PreloadTemplateParams): string {
-  const addFlagsExec = serializeAddFlagWordsSh(p.addFlags, "\\$TEMP");
+  const addFlagsExec = serializeAddFlagWordsSh(p.addFlags, "$TEMP");
   const addFlagsExtract = serializeAddFlagWordsSh(p.addFlags, "$TARGET");
   const nameLiteral = quoteShLiteral(p.name);
   const interpreterLiteral = quoteShLiteral(p.interpBasename);
