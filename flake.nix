@@ -4,14 +4,38 @@
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
     flake-utils.url = "github:numtide/flake-utils/main";
   };
-  outputs = { self, nixpkgs, flake-utils, ... }:
+  outputs = { nixpkgs, flake-utils, ... }:
     let
       supportedSystems = [ "x86_64-linux" "aarch64-linux" ];
+    in
+    flake-utils.lib.eachSystem supportedSystems (system:
+      let
+        pkgs = import nixpkgs { inherit system; };
 
-      single-exe =
+        nix-bundle-elf = pkgs.stdenv.mkDerivation {
+          pname = "nix-bundle-elf";
+          version = "0.1.0";
+          src = ./.;
+          nativeBuildInputs = [ pkgs.bun pkgs.makeWrapper ];
+          dontStrip = true;
+          buildPhase = ''
+            runHook preBuild
+            export HOME=$(mktemp -d)
+            bun build --compile src/cli.ts --outfile nix-bundle-elf
+            runHook postBuild
+          '';
+          installPhase = ''
+            runHook preInstall
+            mkdir -p $out/bin
+            cp nix-bundle-elf $out/bin/nix-bundle-elf
+            wrapProgram $out/bin/nix-bundle-elf \
+              --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.patchelf pkgs.gnutar pkgs.gcc ]}
+            runHook postInstall
+          '';
+        };
+
         # * usage:
         #     single-exe {
-        #       inherit pkgs;
         #       name = "foo";
         #       target = "${pkgs.foo}/bin/foo";
         #       type = "preload";  # optional, default "rpath"
@@ -19,90 +43,91 @@
         # * usage of the generated file:
         #   * `result --extract /path/to/dir` extracts the target
         #     and it's dependencies to `/path/to/dir`. It also creates a wrapper
-        #     scripts `/path/to/dir/bin/$name` that runs the target.
+        #     script `/path/to/dir/bin/$name` that runs the target.
         #   * `result [--] ARGS` extract the bundle to temporary directory
         #     and runs the target with `ARGS`.
         #
         # type:
         #   "rpath"   — uses patchelf --set-rpath (default, simpler)
         #   "preload" — uses LD_PRELOAD (preserves NOTE segments, Node.js SEA safe)
-        { name
-        , target
-        , pkgs
-        , type ? "rpath"
-        , extraFiles ? { }
-        , addFlags ? [ ]
-        }:
-        let
-          addFlagArgs =
-            pkgs.lib.concatMapStrings (flag: " --add-flag ${pkgs.lib.escapeShellArg flag}") addFlags;
-          includeArgs =
-            pkgs.lib.concatStrings (pkgs.lib.mapAttrsToList
-              (dest: src: " --include ${pkgs.lib.escapeShellArg "${toString src}:${dest}"}")
-              extraFiles);
-        in
-        assert builtins.elem type [ "rpath" "preload" ];
-        if type == "rpath" then
-          pkgs.runCommandCC name { buildInputs = [ pkgs.bun pkgs.patchelf pkgs.gnutar ]; }
-            ''
-              bun run ${./.}/src/cli.ts rpath --no-nix-locate --format exe -o "$TMPDIR/${name}"${includeArgs}${addFlagArgs} ${target}
-              mv "$TMPDIR/${name}" $out
-            ''
-        else
-          pkgs.runCommandCC name { buildInputs = [ pkgs.bun pkgs.patchelf pkgs.gnutar ]; }
-            ''
-              bun run ${./.}/src/cli.ts preload --no-nix-locate -o "$TMPDIR/${name}"${includeArgs}${addFlagArgs} ${target}
-              mv "$TMPDIR/${name}" $out
-            '';
+        single-exe =
+          args@{ name
+          , target
+          , type ? "rpath"
+          , extraFiles ? { }
+          , addFlags ? [ ]
+          , ...
+          }:
+          let
+            addFlagArgs =
+              pkgs.lib.concatMapStrings (flag: " --add-flag ${pkgs.lib.escapeShellArg flag}") addFlags;
+            includeArgs =
+              pkgs.lib.concatStrings (pkgs.lib.mapAttrsToList
+                (dest: src: " --include ${pkgs.lib.escapeShellArg "${toString src}:${dest}"}")
+                extraFiles);
+            drv =
+              assert builtins.elem type [ "rpath" "preload" ];
+              if type == "rpath" then
+                pkgs.runCommand name { nativeBuildInputs = [ nix-bundle-elf ]; }
+                  ''
+                    nix-bundle-elf rpath --no-nix-locate --format exe -o "$TMPDIR/${name}"${includeArgs}${addFlagArgs} ${target}
+                    mv "$TMPDIR/${name}" $out
+                  ''
+              else
+                pkgs.runCommand name { nativeBuildInputs = [ nix-bundle-elf ]; }
+                  ''
+                    nix-bundle-elf preload --no-nix-locate -o "$TMPDIR/${name}"${includeArgs}${addFlagArgs} ${target}
+                    mv "$TMPDIR/${name}" $out
+                  '';
+          in
+          if args ? pkgs
+          then builtins.trace "warning: single-exe: the `pkgs` argument is deprecated and has no effect" drv
+          else drv;
 
-      aws-lambda-zip =
-        { name
-        , target
-        , pkgs
-        }:
-        pkgs.runCommandCC name { buildInputs = [ pkgs.bun pkgs.patchelf pkgs.zip ]; }
-          ''
-            bun run ${./.}/src/cli.ts rpath --no-nix-locate --format lambda -o function.zip ${target}
-            mv function.zip $out
-          '';
-    in
-    flake-utils.lib.eachSystem supportedSystems (system:
-      let
-        pkgs = import nixpkgs { inherit system; };
-        test-single-exe = self.lib.${system}.single-exe {
-          inherit pkgs;
+        aws-lambda-zip =
+          args@{ name
+          , target
+          , ...
+          }:
+          let
+            drv = pkgs.runCommand name { nativeBuildInputs = [ nix-bundle-elf pkgs.zip ]; }
+              ''
+                nix-bundle-elf rpath --no-nix-locate --format lambda -o function.zip ${target}
+                mv function.zip $out
+              '';
+          in
+          if args ? pkgs
+          then builtins.trace "warning: aws-lambda-zip: the `pkgs` argument is deprecated and has no effect" drv
+          else drv;
+
+        test-single-exe = single-exe {
           name = "curl";
           target = "${pkgs.curl}/bin/curl";
         };
-        test-single-exe-preload = self.lib.${system}.single-exe {
-          inherit pkgs;
+        test-single-exe-preload = single-exe {
           name = "curl";
           target = "${pkgs.curl}/bin/curl";
           type = "preload";
         };
-        test-lambda-zip = self.lib.${system}.aws-lambda-zip {
-          inherit pkgs;
+        test-lambda-zip = aws-lambda-zip {
           name = "curl";
           target = "${pkgs.curl}/bin/curl";
         };
         test-include-file = pkgs.writeText "test-include" "BUNDLED_CONTENT_OK";
-        test-add-flag-rpath = self.lib.${system}.single-exe {
-          inherit pkgs;
+        test-add-flag-rpath = single-exe {
           name = "cat";
           target = "${pkgs.coreutils}/bin/cat";
           extraFiles = { "test/foo" = test-include-file; };
           addFlags = [ "%ROOT/test/foo" ];
         };
-        test-add-flag-preload = self.lib.${system}.single-exe {
-          inherit pkgs;
+        test-add-flag-preload = single-exe {
           name = "cat";
           target = "${pkgs.coreutils}/bin/cat";
           type = "preload";
           extraFiles = { "test/foo" = test-include-file; };
           addFlags = [ "%ROOT/test/foo" ];
         };
-        test-add-flag-preload-space = self.lib.${system}.single-exe {
-          inherit pkgs;
+        test-add-flag-preload-space = single-exe {
           name = "expr";
           target = "${pkgs.coreutils}/bin/expr";
           type = "preload";
@@ -111,38 +136,17 @@
       in
       {
         packages = {
-          default = pkgs.stdenv.mkDerivation {
-            pname = "nix-bundle-elf";
-            version = "0.1.0";
-            src = ./.;
-            nativeBuildInputs = [ pkgs.bun pkgs.makeWrapper ];
-            dontStrip = true;
-            buildPhase = ''
-              runHook preBuild
-              export HOME=$(mktemp -d)
-              bun build --compile src/cli.ts --outfile nix-bundle-elf
-              runHook postBuild
-            '';
-            installPhase = ''
-              runHook preInstall
-              mkdir -p $out/bin
-              cp nix-bundle-elf $out/bin/nix-bundle-elf
-              wrapProgram $out/bin/nix-bundle-elf \
-                --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.patchelf pkgs.gnutar pkgs.gcc ]}
-              runHook postInstall
-            '';
-          };
-          example-single-exe = self.lib.${system}.single-exe {
-            inherit pkgs;
+          default = nix-bundle-elf;
+          example-single-exe = single-exe {
             name = "example";
             target = "${pkgs.curl}/bin/curl";
           };
-          example-lambda-zip = self.lib.${system}.aws-lambda-zip {
-            inherit pkgs;
+          example-lambda-zip = aws-lambda-zip {
             name = "example";
             target = "${pkgs.hello}/bin/hello";
           };
         };
+
         checks = {
           # curl --version で transitive な依存を含むバンドルが動作することを確認
           single-exe-run = pkgs.runCommand "check-single-exe-run"
@@ -382,6 +386,7 @@
               mkdir -p $out
             '';
         };
+
         devShells.default = pkgs.mkShell {
           buildInputs = [
             pkgs.patchelf
@@ -395,6 +400,7 @@
             pkgs.biome
           ];
         };
+
         lib = {
           inherit single-exe aws-lambda-zip;
         };
