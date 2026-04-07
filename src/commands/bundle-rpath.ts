@@ -13,6 +13,7 @@ import {
 } from "../lib/bundle-common.ts";
 import * as patchelf from "../lib/patchelf.ts";
 import { generateRpathScript } from "../lib/shell-template.ts";
+import type { EnvDirective } from "../lib/types.ts";
 
 function log(msg: string): void {
   console.error(msg);
@@ -45,6 +46,9 @@ export function bundleRpath(argv: string[]): void {
       if (config.addFlags.length > 0) {
         throw new Error("--add-flag is not supported with lambda format");
       }
+      if (config.envDirectives.length > 0) {
+        throw new Error("--env/--env-prefix/--env-suffix is not supported with lambda format");
+      }
       bundleLambda(deps.effectiveTarget, deps.interpreterBasename, outDir, config.output);
     } else {
       bundleExe(deps.effectiveTarget, name, deps.interpreterBasename, outDir, tmpdir, config);
@@ -64,7 +68,7 @@ function bundleExe(
   interpreterBasename: string,
   outDir: string,
   tmpdir: string,
-  config: { output: string; addFlags: string[] },
+  config: { output: string; addFlags: string[]; envDirectives: EnvDirective[] },
 ): void {
   // Copy binary and set RPATH + placeholder interpreter
   const origDir = `${outDir}/orig`;
@@ -88,6 +92,7 @@ function bundleExe(
     interpOffset,
     interpPlaceholderLen: INTERP_PLACEHOLDER_LEN,
     addFlags: config.addFlags,
+    envDirectives: config.envDirectives,
   });
 
   // Concatenate script + tar

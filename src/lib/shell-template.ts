@@ -1,6 +1,7 @@
 // Generate self-extracting shell scripts for rpath and preload bundles.
 
-import { quoteShLiteral, serializeAddFlagWordsSh } from "./add-flags.ts";
+import { quoteShLiteral, serializeAddFlagWordsSh, serializeEnvDirectivesSh } from "./add-flags.ts";
+import type { EnvDirective } from "./types.ts";
 
 interface RpathTemplateParams {
   name: string;
@@ -8,6 +9,7 @@ interface RpathTemplateParams {
   interpOffset: number;
   interpPlaceholderLen: number;
   addFlags: string[];
+  envDirectives: EnvDirective[];
 }
 
 interface PreloadTemplateParams {
@@ -16,14 +18,30 @@ interface PreloadTemplateParams {
   interpOffset: number;
   interpPlaceholderLen: number;
   addFlags: string[];
+  envDirectives: EnvDirective[];
 }
 
 /** Generate the self-extracting script for rpath bundles. */
 export function generateRpathScript(p: RpathTemplateParams): string {
   const addFlagsExec = serializeAddFlagWordsSh(p.addFlags, "$TEMP");
   const addFlagsExtract = serializeAddFlagWordsSh(p.addFlags, "$TARGET");
+  const envExec = serializeEnvDirectivesSh(p.envDirectives, "$TEMP");
+  const envExtract = serializeEnvDirectivesSh(p.envDirectives, "$TARGET", { heredoc: true });
   const nameLiteral = quoteShLiteral(p.name);
   const interpreterLiteral = quoteShLiteral(p.interpreterBasename);
+
+  // Helper: indent each line of a multi-line string with tabs
+  const indent = (s: string, tabs: number): string => {
+    if (!s) return "";
+    const prefix = "\t".repeat(tabs);
+    return s
+      .split("\n")
+      .map((l) => `${prefix}${l}`)
+      .join("\n");
+  };
+
+  const envExecBlock = envExec ? `${envExec}\n` : "";
+  const envExtractBlock = envExtract ? `${indent(envExtract, 2)}\n` : "";
 
   return `#!/bin/sh
 set -u
@@ -63,7 +81,7 @@ if [ "\${1:-}" = "--extract" ]; then
 \tmkdir -p "$TARGET/bin"
 \tcat - >"$TARGET/bin/"${nameLiteral} <<-EOF2
 \t\t#!/bin/sh
-\t\texec "$TARGET/orig/"${nameLiteral} ${addFlagsExtract} "\\$@"
+${envExtractBlock}\t\texec "$TARGET/orig/"${nameLiteral} ${addFlagsExtract} "\\$@"
 \tEOF2
 \tchmod +x "$TARGET/bin/"${nameLiteral}
 \techo "successfully extracted to $2"
@@ -76,7 +94,7 @@ else
 \ttar -C "$TEMP" -xzf "$TEMP/self.tar.gz" || exit 1
 \ttrap 'rm -rf $TEMP' EXIT
 \tpatch_interp "$TEMP/orig/"${nameLiteral} "$TEMP/lib/"${interpreterLiteral}
-\t"$TEMP/orig/"${nameLiteral} ${addFlagsExec} "$@"
+${envExecBlock}\t"$TEMP/orig/"${nameLiteral} ${addFlagsExec} "$@"
 \texit $?
 fi
 #START_OF_TAR#
@@ -87,8 +105,22 @@ fi
 export function generatePreloadScript(p: PreloadTemplateParams): string {
   const addFlagsExec = serializeAddFlagWordsSh(p.addFlags, "$TEMP");
   const addFlagsExtract = serializeAddFlagWordsSh(p.addFlags, "$TARGET");
+  const envExec = serializeEnvDirectivesSh(p.envDirectives, "$TEMP");
+  const envExtract = serializeEnvDirectivesSh(p.envDirectives, "$TARGET", { heredoc: true });
   const nameLiteral = quoteShLiteral(p.name);
   const interpreterLiteral = quoteShLiteral(p.interpBasename);
+
+  const indent = (s: string, tabs: number): string => {
+    if (!s) return "";
+    const prefix = "\t".repeat(tabs);
+    return s
+      .split("\n")
+      .map((l) => `${prefix}${l}`)
+      .join("\n");
+  };
+
+  const envExecBlock = envExec ? `${indent(envExec, 1)}\n` : "";
+  const envExtractBlock = envExtract ? `${indent(envExtract, 2)}\n` : "";
 
   return `#!/bin/sh
 set -u
@@ -118,7 +150,7 @@ copy_and_run() {
 \ttrap 'rm -rf "$tmp" "$TEMP"' EXIT
 \tcp "$dir/orig/"${nameLiteral} "$tmp/"${nameLiteral}
 \tpatch_interp "$tmp/"${nameLiteral} "$real_interp"
-\tLD_LIBRARY_PATH="$dir/lib\${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" LD_PRELOAD="$dir/lib/cleanup_env.so\${LD_PRELOAD:+:$LD_PRELOAD}" "$tmp/"${nameLiteral} ${addFlagsExec} "$@"
+${envExecBlock}\tLD_LIBRARY_PATH="$dir/lib\${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" LD_PRELOAD="$dir/lib/cleanup_env.so\${LD_PRELOAD:+:$LD_PRELOAD}" "$tmp/"${nameLiteral} ${addFlagsExec} "$@"
 \texit $?
 }
 if [ "\${1:-}" = "--extract" ]; then
@@ -146,7 +178,7 @@ if [ "\${1:-}" = "--extract" ]; then
 \t\t\tdd if=/dev/zero bs=1 count=\\$((${p.interpPlaceholderLen} - \\$\{#real_interp})) 2>/dev/null
 \t\t} | dd of="\\$tmp/"${nameLiteral} bs=1 seek=${p.interpOffset} count=${p.interpPlaceholderLen} conv=notrunc 2>/dev/null
 \t\tchmod -w "\\$tmp/"${nameLiteral}
-\t\tLD_LIBRARY_PATH="$TARGET/lib\\$\{LD_LIBRARY_PATH:+:\\$LD_LIBRARY_PATH}" LD_PRELOAD="$TARGET/lib/cleanup_env.so\\$\{LD_PRELOAD:+:\\$LD_PRELOAD}" "\\$tmp/"${nameLiteral} ${addFlagsExtract} "\\$@"
+${envExtractBlock}\t\tLD_LIBRARY_PATH="$TARGET/lib\\$\{LD_LIBRARY_PATH:+:\\$LD_LIBRARY_PATH}" LD_PRELOAD="$TARGET/lib/cleanup_env.so\\$\{LD_PRELOAD:+:\\$LD_PRELOAD}" "\\$tmp/"${nameLiteral} ${addFlagsExtract} "\\$@"
 \t\texit \\$?
 \tEOF2
 \tchmod +x "$TARGET/bin/"${nameLiteral}

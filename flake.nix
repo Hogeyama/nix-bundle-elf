@@ -56,6 +56,7 @@
           , type ? "rpath"
           , extraFiles ? { }
           , addFlags ? [ ]
+          , env ? [ ]
           , ...
           }:
           let
@@ -65,18 +66,28 @@
               pkgs.lib.concatStrings (pkgs.lib.mapAttrsToList
                 (dest: src: " --include ${pkgs.lib.escapeShellArg "${toString src}:${dest}"}")
                 extraFiles);
+            envToArgs = e:
+              if e.action == "replace" then
+                " --env ${pkgs.lib.escapeShellArg e.key} ${pkgs.lib.escapeShellArg e.value}"
+              else if e.action == "prepend" then
+                " --env-prefix ${pkgs.lib.escapeShellArg e.key} ${pkgs.lib.escapeShellArg e.separator} ${pkgs.lib.escapeShellArg e.value}"
+              else if e.action == "append" then
+                " --env-suffix ${pkgs.lib.escapeShellArg e.key} ${pkgs.lib.escapeShellArg e.separator} ${pkgs.lib.escapeShellArg e.value}"
+              else
+                throw "env: unknown action '${e.action}' (expected replace, prepend, or append)";
+            envArgs = pkgs.lib.concatMapStrings envToArgs env;
             drv =
               assert builtins.elem type [ "rpath" "preload" ];
               if type == "rpath" then
                 pkgs.runCommand name { nativeBuildInputs = [ nix-bundle-elf ]; }
                   ''
-                    nix-bundle-elf rpath --no-nix-locate --format exe -o "$TMPDIR/${name}"${includeArgs}${addFlagArgs} ${target}
+                    nix-bundle-elf rpath --no-nix-locate --format exe -o "$TMPDIR/${name}"${includeArgs}${addFlagArgs}${envArgs} ${target}
                     mv "$TMPDIR/${name}" $out
                   ''
               else
                 pkgs.runCommand name { nativeBuildInputs = [ nix-bundle-elf ]; }
                   ''
-                    nix-bundle-elf preload --no-nix-locate -o "$TMPDIR/${name}"${includeArgs}${addFlagArgs} ${target}
+                    nix-bundle-elf preload --no-nix-locate -o "$TMPDIR/${name}"${includeArgs}${addFlagArgs}${envArgs} ${target}
                     mv "$TMPDIR/${name}" $out
                   '';
           in
@@ -132,6 +143,25 @@
           target = "${pkgs.coreutils}/bin/expr";
           type = "preload";
           addFlags = [ "length" "foo bar" ];
+        };
+        test-env-rpath = single-exe {
+          name = "printenv";
+          target = "${pkgs.coreutils}/bin/printenv";
+          env = [
+            { key = "NIX_BUNDLE_TEST_SET"; action = "replace"; value = "hello_world"; }
+            { key = "NIX_BUNDLE_TEST_PREFIX"; action = "prepend"; separator = ":"; value = "/new/prefix"; }
+            { key = "NIX_BUNDLE_TEST_SUFFIX"; action = "append"; separator = ":"; value = "/new/suffix"; }
+          ];
+        };
+        test-env-preload = single-exe {
+          name = "printenv";
+          target = "${pkgs.coreutils}/bin/printenv";
+          type = "preload";
+          env = [
+            { key = "NIX_BUNDLE_TEST_SET"; action = "replace"; value = "hello_world"; }
+            { key = "NIX_BUNDLE_TEST_PREFIX"; action = "prepend"; separator = ":"; value = "/new/prefix"; }
+            { key = "NIX_BUNDLE_TEST_SUFFIX"; action = "append"; separator = ":"; value = "/new/suffix"; }
+          ];
         };
       in
       {
@@ -313,6 +343,134 @@
               echo "$output"
               test "$output" = "7"
               echo "PASS: add-flag-preload-extract-space"
+              mkdir -p $out
+            '';
+
+          # --env / --env-prefix / --env-suffix (rpath): exec mode
+          env-rpath-run = pkgs.runCommand "check-env-rpath-run"
+            { }
+            ''
+              # --env: simple set
+              output=$(${test-env-rpath} -- NIX_BUNDLE_TEST_SET)
+              echo "set: $output"
+              test "$output" = "hello_world"
+
+              # --env-prefix: var was empty
+              output=$(${test-env-rpath} -- NIX_BUNDLE_TEST_PREFIX)
+              echo "prefix-empty: $output"
+              test "$output" = "/new/prefix"
+
+              # --env-prefix: var was already set
+              output=$(NIX_BUNDLE_TEST_PREFIX=/existing ${test-env-rpath} -- NIX_BUNDLE_TEST_PREFIX)
+              echo "prefix-existing: $output"
+              test "$output" = "/new/prefix:/existing"
+
+              # --env-suffix: var was empty
+              output=$(${test-env-rpath} -- NIX_BUNDLE_TEST_SUFFIX)
+              echo "suffix-empty: $output"
+              test "$output" = "/new/suffix"
+
+              # --env-suffix: var was already set
+              output=$(NIX_BUNDLE_TEST_SUFFIX=/existing ${test-env-rpath} -- NIX_BUNDLE_TEST_SUFFIX)
+              echo "suffix-existing: $output"
+              test "$output" = "/existing:/new/suffix"
+
+              echo "PASS: env-rpath-run"
+              mkdir -p $out
+            '';
+
+          # --env / --env-prefix / --env-suffix (rpath): extract mode
+          env-rpath-extract = pkgs.runCommand "check-env-rpath-extract"
+            { }
+            ''
+              extractdir="$TMPDIR/extracted"
+              ${test-env-rpath} --extract "$extractdir"
+
+              output=$("$extractdir/bin/printenv" NIX_BUNDLE_TEST_SET)
+              echo "set: $output"
+              test "$output" = "hello_world"
+
+              output=$("$extractdir/bin/printenv" NIX_BUNDLE_TEST_PREFIX)
+              echo "prefix-empty: $output"
+              test "$output" = "/new/prefix"
+
+              output=$(NIX_BUNDLE_TEST_PREFIX=/existing "$extractdir/bin/printenv" NIX_BUNDLE_TEST_PREFIX)
+              echo "prefix-existing: $output"
+              test "$output" = "/new/prefix:/existing"
+
+              output=$("$extractdir/bin/printenv" NIX_BUNDLE_TEST_SUFFIX)
+              echo "suffix-empty: $output"
+              test "$output" = "/new/suffix"
+
+              output=$(NIX_BUNDLE_TEST_SUFFIX=/existing "$extractdir/bin/printenv" NIX_BUNDLE_TEST_SUFFIX)
+              echo "suffix-existing: $output"
+              test "$output" = "/existing:/new/suffix"
+
+              echo "PASS: env-rpath-extract"
+              mkdir -p $out
+            '';
+
+          # --env / --env-prefix / --env-suffix (preload): exec mode
+          env-preload-run = pkgs.runCommand "check-env-preload-run"
+            { }
+            ''
+              # --env: simple set
+              output=$(${test-env-preload} -- NIX_BUNDLE_TEST_SET)
+              echo "set: $output"
+              test "$output" = "hello_world"
+
+              # --env-prefix: var was empty
+              output=$(${test-env-preload} -- NIX_BUNDLE_TEST_PREFIX)
+              echo "prefix-empty: $output"
+              test "$output" = "/new/prefix"
+
+              # --env-prefix: var was already set
+              output=$(NIX_BUNDLE_TEST_PREFIX=/existing ${test-env-preload} -- NIX_BUNDLE_TEST_PREFIX)
+              echo "prefix-existing: $output"
+              test "$output" = "/new/prefix:/existing"
+
+              # --env-suffix: var was empty
+              output=$(${test-env-preload} -- NIX_BUNDLE_TEST_SUFFIX)
+              echo "suffix-empty: $output"
+              test "$output" = "/new/suffix"
+
+              # --env-suffix: var was already set
+              output=$(NIX_BUNDLE_TEST_SUFFIX=/existing ${test-env-preload} -- NIX_BUNDLE_TEST_SUFFIX)
+              echo "suffix-existing: $output"
+              test "$output" = "/existing:/new/suffix"
+
+              echo "PASS: env-preload-run"
+              mkdir -p $out
+            '';
+
+          # --env / --env-prefix / --env-suffix (preload): extract mode
+          env-preload-extract = pkgs.runCommand "check-env-preload-extract"
+            { }
+            ''
+              extractdir="$TMPDIR/extracted"
+              ${test-env-preload} --extract "$extractdir"
+
+              output=$("$extractdir/bin/printenv" NIX_BUNDLE_TEST_SET)
+              echo "set: $output"
+              test "$output" = "hello_world"
+
+              output=$("$extractdir/bin/printenv" NIX_BUNDLE_TEST_PREFIX)
+              echo "prefix-empty: $output"
+              test "$output" = "/new/prefix"
+
+              output=$(NIX_BUNDLE_TEST_PREFIX=/existing "$extractdir/bin/printenv" NIX_BUNDLE_TEST_PREFIX)
+              echo "prefix-existing: $output"
+              test "$output" = "/new/prefix:/existing"
+
+              output=$("$extractdir/bin/printenv" NIX_BUNDLE_TEST_SUFFIX)
+              echo "suffix-empty: $output"
+              test "$output" = "/new/suffix"
+
+              output=$(NIX_BUNDLE_TEST_SUFFIX=/existing "$extractdir/bin/printenv" NIX_BUNDLE_TEST_SUFFIX)
+              echo "suffix-existing: $output"
+              test "$output" = "/existing:/new/suffix"
+
+              echo "PASS: env-preload-extract"
               mkdir -p $out
             '';
 

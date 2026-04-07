@@ -33,6 +33,14 @@ export function makeInterpPlaceholder(): string {
   return placeholder.slice(0, INTERP_PLACEHOLDER_LEN);
 }
 
+const ENV_NAME_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
+function validateEnvName(name: string): void {
+  if (!ENV_NAME_RE.test(name)) {
+    throw new Error(`invalid environment variable name: ${name}`);
+  }
+}
+
 function printUsage(supportsFormat: boolean): void {
   const prog = "nix-bundle-elf";
   const formatLine = supportsFormat
@@ -45,6 +53,9 @@ Options:
   --include <src>:<dest>       Include a file or directory in the bundle (repeatable)
   --extra-lib <path>           Add an extra shared library to the bundle (repeatable)
   --add-flag <flag>            Pass an additional flag to nix build (repeatable)
+  --env <name> <value>         Set an environment variable (repeatable, supports %ROOT)
+  --env-prefix <name> <sep> <value>  Prepend to an environment variable (repeatable)
+  --env-suffix <name> <sep> <value>  Append to an environment variable (repeatable)
   --prefer-pkg <prefix>        Prefer this package prefix in nix-locate resolution (repeatable)
   --no-nix-locate              Disable nix-locate for dependency resolution
   --nix-index-db-ref <ref>     Git ref for nix-index-database
@@ -62,6 +73,7 @@ export function parseArgs(argv: string[], supportsFormat: boolean): BundleConfig
     includes: [],
     extraLibs: [],
     preferPkgs: [],
+    envDirectives: [],
   };
 
   let i = 0;
@@ -94,6 +106,38 @@ export function parseArgs(argv: string[], supportsFormat: boolean): BundleConfig
           const flag = argv[++i];
           if (flag === undefined) throw new Error("--add-flag requires an argument");
           config.addFlags.push(flag);
+        }
+        break;
+      case "--env":
+        {
+          const name = argv[++i];
+          const value = argv[++i];
+          if (name === undefined || value === undefined)
+            throw new Error("--env requires two arguments: <name> <value>");
+          validateEnvName(name);
+          config.envDirectives.push({ kind: "set", name, value });
+        }
+        break;
+      case "--env-prefix":
+        {
+          const name = argv[++i];
+          const sep = argv[++i];
+          const value = argv[++i];
+          if (name === undefined || sep === undefined || value === undefined)
+            throw new Error("--env-prefix requires three arguments: <name> <sep> <value>");
+          validateEnvName(name);
+          config.envDirectives.push({ kind: "prefix", name, sep, value });
+        }
+        break;
+      case "--env-suffix":
+        {
+          const name = argv[++i];
+          const sep = argv[++i];
+          const value = argv[++i];
+          if (name === undefined || sep === undefined || value === undefined)
+            throw new Error("--env-suffix requires three arguments: <name> <sep> <value>");
+          validateEnvName(name);
+          config.envDirectives.push({ kind: "suffix", name, sep, value });
         }
         break;
       case "--include":

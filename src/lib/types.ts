@@ -1,5 +1,11 @@
 // Core type definitions for nix-bundle-elf.
 
+/** A directive to manipulate an environment variable at runtime. */
+export type EnvDirective =
+  | { kind: "set"; name: string; value: string }
+  | { kind: "prefix"; name: string; sep: string; value: string }
+  | { kind: "suffix"; name: string; sep: string; value: string };
+
 /** Configuration for a bundle operation. */
 export interface BundleConfig {
   target: string;
@@ -14,6 +20,8 @@ export interface BundleConfig {
   preferPkgs: string[];
   /** nix-community/nix-index-database release tag override (e.g. "2026-03-15-045700"). */
   nixIndexDbRef?: string;
+  /** Environment variable directives (set, prefix, suffix). */
+  envDirectives: EnvDirective[];
 }
 
 /** Result of gathering shared library dependencies via RPATH/NEEDED traversal. */

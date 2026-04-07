@@ -127,6 +127,7 @@ export function bundlePreload(argv: string[]): void {
       interpOffset,
       interpPlaceholderLen: INTERP_PLACEHOLDER_LEN,
       addFlags: config.addFlags,
+      envDirectives: config.envDirectives,
     });
 
     // Write output: script + tar
