@@ -140,19 +140,6 @@ patch_interp() {
 \t} | dd of="$binary" bs=1 seek=${p.interpOffset} count=${p.interpPlaceholderLen} conv=notrunc 2>/dev/null
 \tchmod -w "$binary"
 }
-# copy_and_run: copy binary to temp, dd-patch interpreter, run with LD_PRELOAD.
-# We must NOT dd-patch orig/ in-place — that corrupts Node.js SEA binaries.
-# Instead, copy to temp and patch the copy each time.
-copy_and_run() {
-\tlocal dir="$1"; shift
-\tlocal real_interp="$dir/lib/"${interpreterLiteral}
-\tlocal tmp="$(mktemp -d "\${TMPDIR:-/tmp}"/${nameLiteral}.XXXXXX)"
-\ttrap 'rm -rf "$tmp" "$TEMP"' EXIT
-\tcp "$dir/orig/"${nameLiteral} "$tmp/"${nameLiteral}
-\tpatch_interp "$tmp/"${nameLiteral} "$real_interp"
-${envExecBlock}\tLD_LIBRARY_PATH="$dir/lib\${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" LD_PRELOAD="$dir/lib/cleanup_env.so\${LD_PRELOAD:+:$LD_PRELOAD}" "$tmp/"${nameLiteral} ${addFlagsExec} "$@"
-\texit $?
-}
 if [ "\${1:-}" = "--extract" ]; then
 \tif [ -z "\${2:-}" ]; then
 \t\techo "Usage: $0 --extract <path>"
@@ -190,7 +177,10 @@ else
 \t\tshift
 \tfi
 \ttar -C "$TEMP" -xzf "$TEMP/self.tar.gz" || exit 1
-\tcopy_and_run "$TEMP" "$@"
+\ttrap 'rm -rf "$TEMP"' EXIT
+\tpatch_interp "$TEMP/orig/"${nameLiteral} "$TEMP/lib/"${interpreterLiteral}
+${envExecBlock}\tLD_LIBRARY_PATH="$TEMP/lib\${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" LD_PRELOAD="$TEMP/lib/cleanup_env.so\${LD_PRELOAD:+:$LD_PRELOAD}" "$TEMP/orig/"${nameLiteral} ${addFlagsExec} "$@"
+\texit $?
 fi
 #START_OF_TAR#
 `;
