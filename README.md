@@ -57,7 +57,7 @@ nix build .#example-single-exe
 }
 ```
 
-### `lib.single-exe { pkgs; name; target; type ? "rpath"; extraFiles ? {}; addFlags ? []; }`
+### `lib.single-exe { pkgs; name; target; type ? "rpath"; extraFiles ? {}; extraLibs ? []; addFlags ? []; }`
 
 Builds a derivation that outputs a self-extracting executable.
 
@@ -65,6 +65,8 @@ Builds a derivation that outputs a self-extracting executable.
 - `target`: Path to the binary (e.g., `"${pkgs.foo}/bin/foo"`).
 - `type` (optional): `"rpath"` (default) or `"preload"`.
 - `extraFiles` (optional): Attrset of bundle-relative paths to source files.
+- `extraLibs` (optional, preload only): List of shared library paths to bundle
+  that are not discoverable via NEEDED/RPATH (e.g. `dlopen`-ed libraries).
 - `addFlags` (optional): List of arguments injected before user-provided args.
   Use `%ROOT` to refer to the extracted bundle root, and `%%` for a literal `%`.
 

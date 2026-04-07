@@ -39,6 +39,7 @@
         #       name = "foo";
         #       target = "${pkgs.foo}/bin/foo";
         #       type = "preload";  # optional, default "rpath"
+        #       extraLibs = [ "${pkgs.bar}/lib/libbar.so" ];  # optional
         #     }
         # * usage of the generated file:
         #   * `result --extract /path/to/dir` extracts the target
@@ -55,6 +56,7 @@
           , target
           , type ? "rpath"
           , extraFiles ? { }
+          , extraLibs ? [ ]
           , addFlags ? [ ]
           , env ? [ ]
           , ...
@@ -62,6 +64,8 @@
           let
             addFlagArgs =
               pkgs.lib.concatMapStrings (flag: " --add-flag ${pkgs.lib.escapeShellArg flag}") addFlags;
+            extraLibArgs =
+              pkgs.lib.concatMapStrings (lib: " --extra-lib ${pkgs.lib.escapeShellArg lib}") extraLibs;
             includeArgs =
               pkgs.lib.concatStrings (pkgs.lib.mapAttrsToList
                 (dest: src: " --include ${pkgs.lib.escapeShellArg "${toString src}:${dest}"}")
@@ -78,6 +82,8 @@
             envArgs = pkgs.lib.concatMapStrings envToArgs env;
             drv =
               assert builtins.elem type [ "rpath" "preload" ];
+              assert extraLibs == [ ] || type != "rpath"
+                || throw "single-exe: extraLibs is not supported with rpath strategy (use type = \"preload\" instead)";
               if type == "rpath" then
                 pkgs.runCommand name { nativeBuildInputs = [ nix-bundle-elf ]; }
                   ''
@@ -87,7 +93,7 @@
               else
                 pkgs.runCommand name { nativeBuildInputs = [ nix-bundle-elf ]; }
                   ''
-                    nix-bundle-elf preload --no-nix-locate -o "$TMPDIR/${name}"${includeArgs}${addFlagArgs}${envArgs} ${target}
+                    nix-bundle-elf preload --no-nix-locate -o "$TMPDIR/${name}"${includeArgs}${extraLibArgs}${addFlagArgs}${envArgs} ${target}
                     mv "$TMPDIR/${name}" $out
                   '';
           in
