@@ -51,7 +51,8 @@ function printUsage(supportsFormat: boolean): void {
 Options:
   -o, --output <path>          Output path (default: ./<binary-name>)${formatLine}
   --include <src>:<dest>       Include a file or directory in the bundle (repeatable)
-  --extra-lib <path>           Add an extra shared library to the bundle (repeatable)
+  --extra-lib <soname>         Bundle a library not in ELF NEEDED, e.g. dlopen-ed libs (preload only, repeatable)
+  --resolve-with <file>        Provide a .so file as fallback when RPATH resolution fails (repeatable)
   --add-flag <flag>            Pass an additional flag to nix build (repeatable)
   --env <name> <value>         Set an environment variable (repeatable, supports %ROOT)
   --env-prefix <name> <sep> <value>  Prepend to an environment variable (repeatable)
@@ -72,6 +73,7 @@ export function parseArgs(argv: string[], supportsFormat: boolean): BundleConfig
     addFlags: [],
     includes: [],
     extraLibs: [],
+    libPaths: [],
     preferPkgs: [],
     envDirectives: [],
   };
@@ -156,6 +158,16 @@ export function parseArgs(argv: string[], supportsFormat: boolean): BundleConfig
           config.extraLibs.push(lib);
         }
         break;
+      case "--resolve-with":
+        {
+          const libpath = argv[++i];
+          if (libpath === undefined) throw new Error("--resolve-with requires an argument");
+          if (!isAbsolute(libpath)) {
+            throw new Error(`--resolve-with must be an absolute path: ${libpath}`);
+          }
+          config.libPaths.push(libpath);
+        }
+        break;
       case "--prefer-pkg":
         {
           const pkg = argv[++i];
@@ -188,6 +200,12 @@ export function parseArgs(argv: string[], supportsFormat: boolean): BundleConfig
     }
     if (include.dest === "") {
       throw new Error("--include destination must not be empty");
+    }
+  }
+
+  for (const libpath of config.libPaths) {
+    if (!existsSync(libpath)) {
+      throw new Error(`--resolve-with does not exist: ${libpath}`);
     }
   }
 
@@ -229,7 +247,7 @@ export function gatherAllDeps(config: BundleConfig, tmpdir: string): GatheredDep
   let interpreter = patchelf.printInterpreter(target);
   let interpreterBasename = basename(interpreter);
 
-  const result = gatherDeps(target, interpreterBasename, config.extraLibs);
+  const result = gatherDeps(target, interpreterBasename, config.extraLibs, config.libPaths);
 
   if (result === null) {
     log("  RPATH-only resolution was insufficient");
@@ -255,7 +273,7 @@ export function gatherAllDeps(config: BundleConfig, tmpdir: string): GatheredDep
     interpreter = patchelf.printInterpreter(target);
     interpreterBasename = basename(interpreter);
 
-    const retryResult = gatherDeps(target, interpreterBasename, config.extraLibs);
+    const retryResult = gatherDeps(target, interpreterBasename, config.extraLibs, config.libPaths);
     if (retryResult === null) {
       throw new Error("dependency resolution failed even after nix-locate patching");
     }

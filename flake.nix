@@ -40,6 +40,7 @@
         #       target = "${pkgs.foo}/bin/foo";
         #       type = "preload";  # optional, default "rpath"
         #       extraLibs = [ "${pkgs.bar}/lib/libbar.so" ];  # optional
+        #       resolveWith = [ "${pkgs.foo}/lib/libfoo.so" ];  # optional
         #     }
         # * usage of the generated file:
         #   * `result --extract /path/to/dir` extracts the target
@@ -57,6 +58,7 @@
           , type ? "rpath"
           , extraFiles ? { }
           , extraLibs ? [ ]
+          , resolveWith ? [ ]
           , addFlags ? [ ]
           , env ? [ ]
           , ...
@@ -66,6 +68,8 @@
               pkgs.lib.concatMapStrings (flag: " --add-flag ${pkgs.lib.escapeShellArg flag}") addFlags;
             extraLibArgs =
               pkgs.lib.concatMapStrings (lib: " --extra-lib ${pkgs.lib.escapeShellArg lib}") extraLibs;
+            resolveWithArgs =
+              pkgs.lib.concatMapStrings (p: " --resolve-with ${pkgs.lib.escapeShellArg (toString p)}") resolveWith;
             includeArgs =
               pkgs.lib.concatStrings (pkgs.lib.mapAttrsToList
                 (dest: src: " --include ${pkgs.lib.escapeShellArg "${toString src}:${dest}"}")
@@ -87,13 +91,13 @@
               if type == "rpath" then
                 pkgs.runCommand name { nativeBuildInputs = [ nix-bundle-elf ]; }
                   ''
-                    nix-bundle-elf rpath --no-nix-locate --format exe -o "$TMPDIR/${name}"${includeArgs}${addFlagArgs}${envArgs} ${target}
+                    nix-bundle-elf rpath --no-nix-locate --format exe -o "$TMPDIR/${name}"${includeArgs}${resolveWithArgs}${addFlagArgs}${envArgs} ${target}
                     mv "$TMPDIR/${name}" $out
                   ''
               else
                 pkgs.runCommand name { nativeBuildInputs = [ nix-bundle-elf ]; }
                   ''
-                    nix-bundle-elf preload --no-nix-locate -o "$TMPDIR/${name}"${includeArgs}${extraLibArgs}${addFlagArgs}${envArgs} ${target}
+                    nix-bundle-elf preload --no-nix-locate -o "$TMPDIR/${name}"${includeArgs}${resolveWithArgs}${extraLibArgs}${addFlagArgs}${envArgs} ${target}
                     mv "$TMPDIR/${name}" $out
                   '';
           in

@@ -13,12 +13,24 @@ import type { GatherResult } from "./types.ts";
 /**
  * Recursively gather shared library dependencies by traversing NEEDED and RPATH.
  * Returns null if any library cannot be resolved (caller should fall back to nix-locate).
+ *
+ * Search order for each NEEDED soname:
+ *   1. Current library's RPATH / root binary's RPATH
+ *   2. libPaths (matched by basename)
+ *   3. Give up (return null → triggers nix-locate fallback if enabled)
  */
 export function gatherDeps(
   target: string,
   interpreterBasename: string,
   extraSonames: string[] = [],
+  libPaths: string[] = [],
 ): GatherResult | null {
+  // Build soname → path lookup from libPaths (basename is the key).
+  const libPathMap = new Map<string, string>();
+  for (const p of libPaths) {
+    libPathMap.set(basename(p), p);
+  }
+
   const visited = new Set<string>();
   const queue: string[] = [target];
   // Extra sonames injected by --extra-lib are resolved on the first iteration
@@ -45,7 +57,7 @@ export function gatherDeps(
       if (libname === interpreterBasename) continue;
 
       let found: string | null = null;
-      // Search current library's RPATH first, then fall back to root binary's RPATH
+      // (1) Search current library's RPATH, then root binary's RPATH
       for (const rp of currentRpaths) {
         const candidate = `${rp}/${libname}`;
         if (existsSync(candidate)) {
@@ -60,6 +72,13 @@ export function gatherDeps(
             found = candidate;
             break;
           }
+        }
+      }
+      // (2) Check --resolve-with entries
+      if (found === null) {
+        const provided = libPathMap.get(libname);
+        if (provided !== undefined && existsSync(provided)) {
+          found = provided;
         }
       }
 

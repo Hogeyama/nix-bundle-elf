@@ -57,7 +57,7 @@ nix build .#example-single-exe
 }
 ```
 
-### `lib.single-exe { pkgs; name; target; type ? "rpath"; extraFiles ? {}; extraLibs ? []; addFlags ? []; }`
+### `lib.single-exe { pkgs; name; target; type ? "rpath"; extraFiles ? {}; extraLibs ? []; resolveWith ? []; addFlags ? []; }`
 
 Builds a derivation that outputs a self-extracting executable.
 
@@ -67,6 +67,8 @@ Builds a derivation that outputs a self-extracting executable.
 - `extraFiles` (optional): Attrset of bundle-relative paths to source files.
 - `extraLibs` (optional, preload only): List of shared library paths to bundle
   that are not discoverable via NEEDED/RPATH (e.g. `dlopen`-ed libraries).
+- `resolveWith` (optional): List of `.so` file paths used as fallback when
+  RPATH resolution fails. Matched by basename (soname).
 - `addFlags` (optional): List of arguments injected before user-provided args.
   Use `%ROOT` to refer to the extracted bundle root, and `%%` for a literal `%`.
 
@@ -114,10 +116,12 @@ nix-bundle-elf preload ~/.local/bin/copilot -o ./copilot
 nix-bundle-elf preload --extra-lib libutil.so.1 ~/.local/bin/copilot -o ./copilot
 ```
 
-Both CLI commands accept repeatable `--include <src>:<dest>` and
-`--add-flag <arg>` options. `--add-flag` arguments are inserted before
-user arguments, `%ROOT` expands to the extracted bundle root at runtime,
-and `%%` escapes a literal `%`.
+Both CLI commands accept repeatable `--include <src>:<dest>`,
+`--add-flag <arg>`, and `--resolve-with <file>` options.
+`--add-flag` arguments are inserted before user arguments, `%ROOT` expands
+to the extracted bundle root at runtime, and `%%` escapes a literal `%`.
+`--resolve-with` provides a `.so` file as a fallback when RPATH resolution
+fails (matched by basename).
 
 The `preload` command additionally accepts repeatable `--extra-lib <soname>`
 to bundle libraries that cannot be discovered by NEEDED/RPATH traversal
