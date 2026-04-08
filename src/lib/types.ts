@@ -26,6 +26,29 @@ export interface BundleConfig {
   envDirectives: EnvDirective[];
 }
 
+/** A binary to include in a script bundle. */
+export interface BundleBinary {
+  /** Logical name for the binary (used in bin/ wrapper and lib-{name}/ directory). */
+  name: string;
+  /** Absolute path to the ELF binary to bundle. */
+  target: string;
+}
+
+/** Per-binary gathered dependency info for script bundles. */
+export interface BundledBinaryInfo {
+  name: string;
+  /** The effective target path (may be patched copy). */
+  effectiveTarget: string;
+  /** Interpreter basename (e.g. ld-linux-x86-64.so.2). */
+  interpreterBasename: string;
+  /** Full path to interpreter. */
+  interpreterPath: string;
+  /** Absolute paths to library files. */
+  libs: string[];
+  /** Byte offset of interpreter placeholder in the bundled binary. */
+  interpOffset: number;
+}
+
 /** Result of gathering shared library dependencies via RPATH/NEEDED traversal. */
 export interface GatherResult {
   /** Absolute paths to shared libraries. */

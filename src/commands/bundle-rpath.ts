@@ -12,7 +12,7 @@ import {
   setPlaceholderInterpreter,
 } from "../lib/bundle-common.ts";
 import * as patchelf from "../lib/patchelf.ts";
-import { generateRpathScript } from "../lib/shell-template.ts";
+import { generateScript } from "../lib/shell-template.ts";
 import type { EnvDirective } from "../lib/types.ts";
 
 function log(msg: string): void {
@@ -86,13 +86,13 @@ function bundleExe(
   createTarGz(outDir, tarPath);
 
   // Generate self-extracting script
-  const script = generateRpathScript({
+  const script = generateScript({
     name,
-    interpreterBasename,
-    interpOffset,
+    type: "rpath",
+    binaries: [{ name, interpreterBasename, interpOffset, libDir: "lib" }],
     interpPlaceholderLen: INTERP_PLACEHOLDER_LEN,
-    addFlags: config.addFlags,
     envDirectives: config.envDirectives,
+    entry: { kind: "binary", addFlags: config.addFlags },
   });
 
   // Concatenate script + tar
