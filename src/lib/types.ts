@@ -49,6 +49,30 @@ export interface BundledBinaryInfo {
   interpOffset: number;
 }
 
+/** Configuration for a script bundle operation. */
+export interface ScriptBundleConfig {
+  /** Path to the user's entry shell script. */
+  scriptPath: string;
+  /** Output path for the self-extracting bundle. */
+  output: string;
+  /** Bundling strategy for all binaries. */
+  type: "rpath" | "preload";
+  /** Binaries to bundle. */
+  binaries: BundleBinary[];
+  useNixLocate: boolean;
+  includes: Array<{ src: string; dest: string }>;
+  /** Extra library sonames to resolve alongside NEEDED entries (preload only). */
+  extraLibs: string[];
+  /** Additional library file paths for dependency resolution. */
+  libPaths: string[];
+  /** Additional preferred package prefixes for nix-locate resolution. */
+  preferPkgs: string[];
+  /** nix-community/nix-index-database release tag override. */
+  nixIndexDbRef?: string;
+  /** Environment variable directives (set, prefix, suffix). */
+  envDirectives: EnvDirective[];
+}
+
 /** Result of gathering shared library dependencies via RPATH/NEEDED traversal. */
 export interface GatherResult {
   /** Absolute paths to shared libraries. */

@@ -121,6 +121,51 @@
           then builtins.trace "warning: aws-lambda-zip: the `pkgs` argument is deprecated and has no effect" drv
           else drv;
 
+        bundle-script =
+          args@{ name
+          , script
+          , binaries
+          , type ? "rpath"
+          , extraFiles ? { }
+          , extraLibs ? [ ]
+          , env ? [ ]
+          , ...
+          }:
+          let
+            bundleBinArgs =
+              pkgs.lib.concatMapStrings
+                (b: " --bundle-bin ${pkgs.lib.escapeShellArg "${b.name}:${b.target}"}")
+                binaries;
+            includeArgs =
+              pkgs.lib.concatStrings (pkgs.lib.mapAttrsToList
+                (dest: src: " --include ${pkgs.lib.escapeShellArg "${toString src}:${dest}"}")
+                extraFiles);
+            extraLibArgs =
+              pkgs.lib.concatMapStrings (lib: " --extra-lib ${pkgs.lib.escapeShellArg lib}") extraLibs;
+            envToArgs = e:
+              if e.action == "replace" then
+                " --env ${pkgs.lib.escapeShellArg e.key} ${pkgs.lib.escapeShellArg e.value}"
+              else if e.action == "prepend" then
+                " --env-prefix ${pkgs.lib.escapeShellArg e.key} ${pkgs.lib.escapeShellArg e.separator} ${pkgs.lib.escapeShellArg e.value}"
+              else if e.action == "append" then
+                " --env-suffix ${pkgs.lib.escapeShellArg e.key} ${pkgs.lib.escapeShellArg e.separator} ${pkgs.lib.escapeShellArg e.value}"
+              else
+                throw "env: unknown action '${e.action}' (expected replace, prepend, or append)";
+            envArgs = pkgs.lib.concatMapStrings envToArgs env;
+            drv =
+              assert builtins.elem type [ "rpath" "preload" ];
+              assert extraLibs == [ ] || type != "rpath"
+                || throw "bundle-script: extraLibs is not supported with rpath strategy (use type = \"preload\" instead)";
+              pkgs.runCommand name { nativeBuildInputs = [ nix-bundle-elf ]; }
+                ''
+                  nix-bundle-elf script --no-nix-locate --type ${type} -o "$TMPDIR/${name}"${bundleBinArgs}${includeArgs}${extraLibArgs}${envArgs} ${script}
+                  mv "$TMPDIR/${name}" $out
+                '';
+          in
+          if args ? pkgs
+          then builtins.trace "warning: bundle-script: the `pkgs` argument is deprecated and has no effect" drv
+          else drv;
+
         test-single-exe = single-exe {
           name = "curl";
           target = "${pkgs.curl}/bin/curl";
@@ -171,6 +216,45 @@
             { key = "NIX_BUNDLE_TEST_SET"; action = "replace"; value = "hello_world"; }
             { key = "NIX_BUNDLE_TEST_PREFIX"; action = "prepend"; separator = ":"; value = "/new/prefix"; }
             { key = "NIX_BUNDLE_TEST_SUFFIX"; action = "append"; separator = ":"; value = "/new/suffix"; }
+          ];
+        };
+
+        # script bundle test fixtures
+        test-script-entry-single = pkgs.writeScript "test-entry-single" ''
+          #!/bin/sh
+          echo "SCRIPT_START"
+          cat --version | head -1
+          echo "SCRIPT_END"
+        '';
+        test-bundle-script-single = bundle-script {
+          name = "test-script-single";
+          script = test-script-entry-single;
+          binaries = [
+            { name = "cat"; target = "${pkgs.coreutils}/bin/cat"; }
+          ];
+        };
+        test-script-entry-multi = pkgs.writeScript "test-entry-multi" ''
+          #!/bin/sh
+          echo "MULTI_START"
+          curl --version | head -1
+          cat --version | head -1
+          echo "MULTI_END"
+        '';
+        test-bundle-script-multi = bundle-script {
+          name = "test-script-multi";
+          script = test-script-entry-multi;
+          binaries = [
+            { name = "curl"; target = "${pkgs.curl}/bin/curl"; }
+            { name = "cat"; target = "${pkgs.coreutils}/bin/cat"; }
+          ];
+        };
+        test-bundle-script-multi-preload = bundle-script {
+          name = "test-script-multi-preload";
+          script = test-script-entry-multi;
+          type = "preload";
+          binaries = [
+            { name = "curl"; target = "${pkgs.curl}/bin/curl"; }
+            { name = "cat"; target = "${pkgs.coreutils}/bin/cat"; }
           ];
         };
       in
@@ -553,6 +637,138 @@
               echo "PASS: bun-patchelf"
               mkdir -p $out
             '';
+
+          # script bundle: single binary, execute mode
+          script-bundle-single-run = pkgs.runCommand "check-script-bundle-single-run"
+            { }
+            ''
+              output=$(${test-bundle-script-single} --)
+              echo "$output"
+              echo "$output" | grep -q "SCRIPT_START"
+              echo "$output" | grep -q "SCRIPT_END"
+              echo "$output" | grep -q "coreutils"
+              echo "PASS: script-bundle-single-run"
+              mkdir -p $out
+            '';
+
+          # script bundle: single binary, extract mode
+          script-bundle-single-extract = pkgs.runCommand "check-script-bundle-single-extract"
+            { }
+            ''
+              extractdir="$TMPDIR/extracted"
+              ${test-bundle-script-single} --extract "$extractdir"
+
+              # Verify structure
+              test -f "$extractdir/entry.sh"
+              test -f "$extractdir/orig/cat"
+              test -d "$extractdir/lib-cat"
+              test -x "$extractdir/bin/cat"
+              test -x "$extractdir/bin/test-script-single"
+
+              # Run via wrapper
+              output=$("$extractdir/bin/test-script-single")
+              echo "$output"
+              echo "$output" | grep -q "SCRIPT_START"
+              echo "$output" | grep -q "coreutils"
+
+              echo "PASS: script-bundle-single-extract"
+              mkdir -p $out
+            '';
+
+          # script bundle: multi binary, execute mode
+          script-bundle-multi-run = pkgs.runCommand "check-script-bundle-multi-run"
+            { }
+            ''
+              output=$(${test-bundle-script-multi} --)
+              echo "$output"
+              echo "$output" | grep -q "MULTI_START"
+              echo "$output" | grep -q "MULTI_END"
+              echo "$output" | grep -q "curl"
+              echo "$output" | grep -q "coreutils"
+              echo "PASS: script-bundle-multi-run"
+              mkdir -p $out
+            '';
+
+          # script bundle: multi binary, extract mode with RPATH check
+          script-bundle-multi-extract = pkgs.runCommand "check-script-bundle-multi-extract"
+            { nativeBuildInputs = [ pkgs.patchelf ]; }
+            ''
+              extractdir="$TMPDIR/extracted"
+              ${test-bundle-script-multi} --extract "$extractdir"
+
+              # Verify structure
+              test -f "$extractdir/entry.sh"
+              test -f "$extractdir/orig/curl"
+              test -f "$extractdir/orig/cat"
+              test -d "$extractdir/lib-curl"
+              test -d "$extractdir/lib-cat"
+              test -x "$extractdir/bin/curl"
+              test -x "$extractdir/bin/cat"
+              test -x "$extractdir/bin/test-script-multi"
+
+              # Verify per-binary RPATH
+              rpath=$(patchelf --print-rpath "$extractdir/orig/curl")
+              echo "curl RPATH: $rpath"
+              echo "$rpath" | grep -q "\$ORIGIN/../lib-curl"
+
+              rpath=$(patchelf --print-rpath "$extractdir/orig/cat")
+              echo "cat RPATH: $rpath"
+              echo "$rpath" | grep -q "\$ORIGIN/../lib-cat"
+
+              # Run via wrapper
+              output=$("$extractdir/bin/test-script-multi")
+              echo "$output"
+              echo "$output" | grep -q "MULTI_START"
+              echo "$output" | grep -q "curl"
+              echo "$output" | grep -q "coreutils"
+
+              echo "PASS: script-bundle-multi-extract"
+              mkdir -p $out
+            '';
+
+          # script bundle: multi binary preload, execute mode
+          script-bundle-multi-preload-run = pkgs.runCommand "check-script-bundle-multi-preload-run"
+            { }
+            ''
+              output=$(${test-bundle-script-multi-preload} --)
+              echo "$output"
+              echo "$output" | grep -q "MULTI_START"
+              echo "$output" | grep -q "MULTI_END"
+              echo "$output" | grep -q "curl"
+              echo "$output" | grep -q "coreutils"
+              echo "PASS: script-bundle-multi-preload-run"
+              mkdir -p $out
+            '';
+
+          # script bundle: multi binary preload, extract mode
+          script-bundle-multi-preload-extract = pkgs.runCommand "check-script-bundle-multi-preload-extract"
+            { }
+            ''
+              extractdir="$TMPDIR/extracted"
+              ${test-bundle-script-multi-preload} --extract "$extractdir"
+
+              # Verify structure
+              test -f "$extractdir/entry.sh"
+              test -f "$extractdir/orig/curl"
+              test -f "$extractdir/orig/cat"
+              test -d "$extractdir/lib-curl"
+              test -d "$extractdir/lib-cat"
+              test -f "$extractdir/lib-curl/cleanup_env.so"
+              test -f "$extractdir/lib-cat/cleanup_env.so"
+              test -x "$extractdir/bin/curl"
+              test -x "$extractdir/bin/cat"
+              test -x "$extractdir/bin/test-script-multi-preload"
+
+              # Run via wrapper
+              output=$("$extractdir/bin/test-script-multi-preload")
+              echo "$output"
+              echo "$output" | grep -q "MULTI_START"
+              echo "$output" | grep -q "curl"
+              echo "$output" | grep -q "coreutils"
+
+              echo "PASS: script-bundle-multi-preload-extract"
+              mkdir -p $out
+            '';
         };
 
         devShells.default = pkgs.mkShell {
@@ -570,7 +786,7 @@
         };
 
         lib = {
-          inherit single-exe aws-lambda-zip;
+          inherit single-exe aws-lambda-zip bundle-script;
         };
       }
     );
