@@ -20,7 +20,7 @@ import {
 import { CLEANUP_ENV_C } from "../lib/cleanup-env-source.ts";
 import * as patchelf from "../lib/patchelf.ts";
 import { resolveTool } from "../lib/resolve-tool.ts";
-import { generatePreloadScript } from "../lib/shell-template.ts";
+import { generateScript } from "../lib/shell-template.ts";
 
 function log(msg: string): void {
   console.error(msg);
@@ -121,13 +121,15 @@ export function bundlePreload(argv: string[]): void {
     createTarGz(outDir, tarPath);
 
     // Generate self-extracting script
-    const script = generatePreloadScript({
+    const script = generateScript({
       name,
-      interpBasename: deps.interpreterBasename,
-      interpOffset,
+      type: "preload",
+      binaries: [
+        { name, interpreterBasename: deps.interpreterBasename, interpOffset, libDir: "lib" },
+      ],
       interpPlaceholderLen: INTERP_PLACEHOLDER_LEN,
-      addFlags: config.addFlags,
       envDirectives: config.envDirectives,
+      entry: { kind: "binary", addFlags: config.addFlags },
     });
 
     // Write output: script + tar

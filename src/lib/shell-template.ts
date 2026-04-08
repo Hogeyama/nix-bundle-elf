@@ -1,177 +1,225 @@
-// Generate self-extracting shell scripts for rpath and preload bundles.
+// Generate self-extracting shell scripts for bundles.
 
 import { quoteShLiteral, serializeAddFlagWordsSh, serializeEnvDirectivesSh } from "./add-flags.ts";
 import type { EnvDirective } from "./types.ts";
 
-interface RpathTemplateParams {
+/** Per-binary metadata embedded in the generated shell script. */
+export interface BinaryInfo {
   name: string;
   interpreterBasename: string;
   interpOffset: number;
-  interpPlaceholderLen: number;
-  addFlags: string[];
-  envDirectives: EnvDirective[];
+  /** Library directory name relative to bundle root (e.g. "lib" or "lib-yq"). */
+  libDir: string;
 }
 
-interface PreloadTemplateParams {
+/** How the bundle's main entry point is invoked. */
+export type EntryConfig = { kind: "binary"; addFlags: string[] };
+
+export interface TemplateParams {
+  /** Bundle name (temp dir, extract wrapper, etc.). */
   name: string;
-  interpBasename: string;
-  interpOffset: number;
+  type: "rpath" | "preload";
+  binaries: BinaryInfo[];
   interpPlaceholderLen: number;
-  addFlags: string[];
   envDirectives: EnvDirective[];
+  entry: EntryConfig;
 }
 
-/** Generate the self-extracting script for rpath bundles. */
-export function generateRpathScript(p: RpathTemplateParams): string {
-  const addFlagsExec = serializeAddFlagWordsSh(p.addFlags, "$TEMP");
-  const addFlagsExtract = serializeAddFlagWordsSh(p.addFlags, "$TARGET");
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+function indentStr(s: string, tabs: number): string {
+  if (!s) return "";
+  const prefix = "\t".repeat(tabs);
+  return s
+    .split("\n")
+    .map((l) => `${prefix}${l}`)
+    .join("\n");
+}
+
+/**
+ * Tagged template literal that strips common leading whitespace (spaces
+ * only) from template literal fragments, leaving interpolated values
+ * untouched.  Tabs in the content are preserved.
+ *
+ * NOTE: This is a minimal implementation tailored to this file's usage.
+ * Known limitations:
+ * - Only counts spaces for indent (tabs are treated as content).
+ * - Interpolated values that start a new line can confuse indent detection
+ *   if the fragment boundary falls mid-line in an unexpected way.
+ *
+ * Trailing newlines are preserved. Use a backslash immediately after the
+ * opening backtick to suppress an initial newline when needed.
+ */
+function dedent(strings: TemplateStringsArray, ...values: unknown[]): string {
+  // Compute common indent from the literal fragments only.
+  // Skip the first line of each fragment (index > 0) since it continues the previous line.
+  const allLines = strings.flatMap((s, si) => {
+    const lines = s.split("\n");
+    return si === 0 ? lines : lines.slice(1);
+  });
+  const indent = Math.min(
+    ...allLines.filter((l) => l.trim()).map((l) => l.match(/^ */)?.[0].length ?? 0),
+  );
+  // Strip that indent from each fragment, then reassemble with values.
+  const stripped = strings.map((s) =>
+    s
+      .split("\n")
+      .map((line) => (line.startsWith(" ".repeat(indent)) ? line.slice(indent) : line))
+      .join("\n"),
+  );
+  let result = stripped[0];
+  for (let i = 0; i < values.length; i++) {
+    result += String(values[i]) + stripped[i + 1];
+  }
+  return result.replace(/^\n/, "");
+}
+
+/** Generate the patch_interp shell function (offset as parameter). */
+function patchInterpFunc(placeholderLen: number): string {
+  return dedent`\
+    patch_interp() {
+    \tlocal binary="$1" real_interp="$2" offset="$3"
+    \tif [ \${#real_interp} -ge ${placeholderLen} ]; then
+    \t\techo "Error: interpreter path too long (\${#real_interp} >= ${placeholderLen})" >&2
+    \t\treturn 1
+    \tfi
+    \tchmod +w "$binary"
+    \t{
+    \t\tprintf '%s' "$real_interp"
+    \t\tdd if=/dev/zero bs=1 count=$((${placeholderLen} - \${#real_interp})) 2>/dev/null
+    \t} | dd of="$binary" bs=1 seek="$offset" count=${placeholderLen} conv=notrunc 2>/dev/null
+    \tchmod -w "$binary"
+    }`;
+}
+
+/** Generate patch_interp calls for every binary. */
+function generatePatchLines(binaries: BinaryInfo[], rootExpr: string): string {
+  return binaries
+    .map((b) => {
+      const bn = quoteShLiteral(b.name);
+      const ld = quoteShLiteral(b.libDir);
+      const il = quoteShLiteral(b.interpreterBasename);
+      return `\tpatch_interp "${rootExpr}/orig/"${bn} "${rootExpr}/"${ld}/${il} ${b.interpOffset}`;
+    })
+    .join("\n");
+}
+
+/**
+ * Generate a shell exec line for a binary.
+ * rpath: exec directly. preload: prefix with LD_LIBRARY_PATH + LD_PRELOAD.
+ * @param ds - dollar sign expression ("$" for inline, "\\$" for heredoc)
+ * @param suffix - trailing args (e.g. addFlags + '"$@"')
+ */
+function binaryExecLine(
+  type: "rpath" | "preload",
+  b: BinaryInfo,
+  rootExpr: string,
+  ds: string,
+  suffix: string,
+): string {
+  const bn = quoteShLiteral(b.name);
+  const cmd = `exec "${rootExpr}/orig/"${bn} ${suffix}`;
+  if (type === "rpath") return cmd;
+  const ld = quoteShLiteral(b.libDir);
+  return `LD_LIBRARY_PATH="${rootExpr}/"${ld}"${ds}{LD_LIBRARY_PATH:+:${ds}LD_LIBRARY_PATH}" LD_PRELOAD="${rootExpr}/"${ld}"/cleanup_env.so${ds}{LD_PRELOAD:+:${ds}LD_PRELOAD}" ${cmd}`;
+}
+
+// ---------------------------------------------------------------------------
+// Unified template
+// ---------------------------------------------------------------------------
+
+function assertNever(x: never): never {
+  throw new Error(`unexpected entry kind: ${(x as EntryConfig).kind}`);
+}
+
+/** Generate extract-mode bin/ wrappers. */
+function generateExtractWrappers(p: TemplateParams, envExtractBlock: string): string {
+  switch (p.entry.kind) {
+    case "binary": {
+      const b = p.binaries[0];
+      const bn = quoteShLiteral(b.name);
+      const addFlagsExtract = serializeAddFlagWordsSh(p.entry.addFlags, "$TARGET");
+      const execLine = binaryExecLine(p.type, b, "$TARGET", "\\$", `${addFlagsExtract} "\\$@"`);
+      return dedent`\
+        \tmkdir -p "$TARGET/bin"
+        \tcat - >"$TARGET/bin/"${bn} <<-EOF2
+        \t\t#!/bin/sh
+        ${envExtractBlock}\t\t${execLine}
+        \tEOF2
+        \tchmod +x "$TARGET/bin/"${bn}`;
+    }
+    default:
+      return assertNever(p.entry);
+  }
+}
+
+/** Generate execute-mode invocation lines. */
+function generateExecLines(p: TemplateParams, envExecBlock: string): string {
+  switch (p.entry.kind) {
+    case "binary": {
+      const b = p.binaries[0];
+      const bn = quoteShLiteral(b.name);
+      const addFlagsExec = serializeAddFlagWordsSh(p.entry.addFlags, "$TEMP");
+      if (p.type === "rpath") {
+        return `${envExecBlock}\t"$TEMP/orig/"${bn} ${addFlagsExec} "$@"`;
+      }
+      const ld = quoteShLiteral(b.libDir);
+      return `${envExecBlock}\tLD_LIBRARY_PATH="$TEMP/"${ld}"\${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" LD_PRELOAD="$TEMP/"${ld}"/cleanup_env.so\${LD_PRELOAD:+:$LD_PRELOAD}" "$TEMP/orig/"${bn} ${addFlagsExec} "$@"`;
+    }
+    default:
+      return assertNever(p.entry);
+  }
+}
+
+/** Generate a self-extracting shell script for any bundle configuration. */
+export function generateScript(p: TemplateParams): string {
+  const nameLiteral = quoteShLiteral(p.name);
   const envExec = serializeEnvDirectivesSh(p.envDirectives, "$TEMP");
   const envExtract = serializeEnvDirectivesSh(p.envDirectives, "$TARGET", { heredoc: true });
-  const nameLiteral = quoteShLiteral(p.name);
-  const interpreterLiteral = quoteShLiteral(p.interpreterBasename);
-
-  // Helper: indent each line of a multi-line string with tabs
-  const indent = (s: string, tabs: number): string => {
-    if (!s) return "";
-    const prefix = "\t".repeat(tabs);
-    return s
-      .split("\n")
-      .map((l) => `${prefix}${l}`)
-      .join("\n");
-  };
-
   const envExecBlock = envExec ? `${envExec}\n` : "";
-  const envExtractBlock = envExtract ? `${indent(envExtract, 2)}\n` : "";
+  const envExtractBlock = envExtract ? `${indentStr(envExtract, 2)}\n` : "";
 
-  return `#!/bin/sh
-set -u
-TEMP="$(mktemp -d "\${TMPDIR:-/tmp}"/${nameLiteral}.XXXXXX)"
-N=$(grep -an "^#START_OF_TAR#" "$0" | cut -d: -f1)
-tail -n +"$((N + 1))" <"$0" > "$TEMP/self.tar.gz" || exit 1
-# Patch the interpreter placeholder in the binary with the actual
-# absolute path to the bundled ld-linux. The byte offset was
-# determined at bundle time to avoid runtime binary searching.
-patch_interp() {
-\tlocal binary="$1" real_interp="$2"
-\tif [ \${#real_interp} -ge ${p.interpPlaceholderLen} ]; then
-\t\techo "Error: interpreter path too long (\${#real_interp} >= ${p.interpPlaceholderLen})" >&2
-\t\treturn 1
-\tfi
-\tchmod +w "$binary"
-\t{
-\t\tprintf '%s' "$real_interp"
-\t\tdd if=/dev/zero bs=1 count=$((${p.interpPlaceholderLen} - \${#real_interp})) 2>/dev/null
-\t} | dd of="$binary" bs=1 seek=${p.interpOffset} count=${p.interpPlaceholderLen} conv=notrunc 2>/dev/null
-\tchmod -w "$binary"
-}
-if [ "\${1:-}" = "--extract" ]; then
-\t# extract mode
-\tif [ -z "\${2:-}" ]; then
-\t\techo "Usage: $0 --extract <path>"
-\t\texit 1
-\tfi
-\tif [ -e "$2" ]; then
-\t\techo "Error: $2 already exists"
-\t\texit 1
-\tfi
-\tmkdir -p "$2"
-\tTARGET=$(cd "$2" && pwd)
-\ttar -C "$TARGET" -xzf "$TEMP/self.tar.gz" || exit 1
-\tpatch_interp "$TARGET/orig/"${nameLiteral} "$TARGET/lib/"${interpreterLiteral}
-\tmkdir -p "$TARGET/bin"
-\tcat - >"$TARGET/bin/"${nameLiteral} <<-EOF2
-\t\t#!/bin/sh
-${envExtractBlock}\t\texec "$TARGET/orig/"${nameLiteral} ${addFlagsExtract} "\\$@"
-\tEOF2
-\tchmod +x "$TARGET/bin/"${nameLiteral}
-\techo "successfully extracted to $2"
-\texit 0
-else
-\t# execute mode
-\tif [ "\${1:-}" = "--" ]; then
-\t\tshift
-\tfi
-\ttar -C "$TEMP" -xzf "$TEMP/self.tar.gz" || exit 1
-\ttrap 'rm -rf $TEMP' EXIT
-\tpatch_interp "$TEMP/orig/"${nameLiteral} "$TEMP/lib/"${interpreterLiteral}
-${envExecBlock}\t"$TEMP/orig/"${nameLiteral} ${addFlagsExec} "$@"
-\texit $?
-fi
-#START_OF_TAR#
-`;
-}
+  const patchExecLines = generatePatchLines(p.binaries, "$TEMP");
+  const patchExtractLines = generatePatchLines(p.binaries, "$TARGET");
+  const extractBinWrappers = generateExtractWrappers(p, envExtractBlock);
+  const execLines = generateExecLines(p, envExecBlock);
 
-/** Generate the self-extracting script for preload bundles. */
-export function generatePreloadScript(p: PreloadTemplateParams): string {
-  const addFlagsExec = serializeAddFlagWordsSh(p.addFlags, "$TEMP");
-  const addFlagsExtract = serializeAddFlagWordsSh(p.addFlags, "$TARGET");
-  const envExec = serializeEnvDirectivesSh(p.envDirectives, "$TEMP");
-  const envExtract = serializeEnvDirectivesSh(p.envDirectives, "$TARGET", { heredoc: true });
-  const nameLiteral = quoteShLiteral(p.name);
-  const interpreterLiteral = quoteShLiteral(p.interpBasename);
-
-  const indent = (s: string, tabs: number): string => {
-    if (!s) return "";
-    const prefix = "\t".repeat(tabs);
-    return s
-      .split("\n")
-      .map((l) => `${prefix}${l}`)
-      .join("\n");
-  };
-
-  const envExecBlock = envExec ? `${indent(envExec, 1)}\n` : "";
-  const envExtractBlock = envExtract ? `${indent(envExtract, 2)}\n` : "";
-
-  return `#!/bin/sh
-set -u
-TEMP="$(mktemp -d "\${TMPDIR:-/tmp}"/${nameLiteral}.XXXXXX)"
-N=$(grep -an "^#START_OF_TAR#" "$0" | cut -d: -f1)
-tail -n +"$((N + 1))" <"$0" > "$TEMP/self.tar.gz" || exit 1
-patch_interp() {
-\tlocal binary="$1" real_interp="$2"
-\tif [ \${#real_interp} -ge ${p.interpPlaceholderLen} ]; then
-\t\techo "Error: interpreter path too long (\${#real_interp} >= ${p.interpPlaceholderLen})" >&2
-\t\treturn 1
-\tfi
-\tchmod +w "$binary"
-\t{
-\t\tprintf '%s' "$real_interp"
-\t\tdd if=/dev/zero bs=1 count=$((${p.interpPlaceholderLen} - \${#real_interp})) 2>/dev/null
-\t} | dd of="$binary" bs=1 seek=${p.interpOffset} count=${p.interpPlaceholderLen} conv=notrunc 2>/dev/null
-\tchmod -w "$binary"
-}
-if [ "\${1:-}" = "--extract" ]; then
-\tif [ -z "\${2:-}" ]; then
-\t\techo "Usage: $0 --extract <path>"
-\t\texit 1
-\tfi
-\tif [ -e "$2" ]; then
-\t\techo "Error: $2 already exists"
-\t\texit 1
-\tfi
-\tmkdir -p "$2"
-\tTARGET=$(cd "$2" && pwd)
-\ttar -C "$TARGET" -xzf "$TEMP/self.tar.gz" || exit 1
-\tpatch_interp "$TARGET/orig/"${nameLiteral} "$TARGET/lib/"${interpreterLiteral}
-\tmkdir -p "$TARGET/bin"
-\tcat - >"$TARGET/bin/"${nameLiteral} <<-EOF2
-\t\t#!/bin/sh
-${envExtractBlock}\t\tLD_LIBRARY_PATH="$TARGET/lib\\$\{LD_LIBRARY_PATH:+:\\$LD_LIBRARY_PATH}" LD_PRELOAD="$TARGET/lib/cleanup_env.so\\$\{LD_PRELOAD:+:\\$LD_PRELOAD}" exec "$TARGET/orig/"${nameLiteral} ${addFlagsExtract} "\\$@"
-\tEOF2
-\tchmod +x "$TARGET/bin/"${nameLiteral}
-\trm -rf "$TEMP"
-\techo "successfully extracted to $2"
-\texit 0
-else
-\tif [ "\${1:-}" = "--" ]; then
-\t\tshift
-\tfi
-\ttar -C "$TEMP" -xzf "$TEMP/self.tar.gz" || exit 1
-\ttrap 'rm -rf "$TEMP"' EXIT
-\tpatch_interp "$TEMP/orig/"${nameLiteral} "$TEMP/lib/"${interpreterLiteral}
-${envExecBlock}\tLD_LIBRARY_PATH="$TEMP/lib\${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" LD_PRELOAD="$TEMP/lib/cleanup_env.so\${LD_PRELOAD:+:$LD_PRELOAD}" "$TEMP/orig/"${nameLiteral} ${addFlagsExec} "$@"
-\texit $?
-fi
-#START_OF_TAR#
-`;
+  return dedent`\
+      #!/bin/sh
+      set -u
+      TEMP="$(mktemp -d "\${TMPDIR:-/tmp}"/${nameLiteral}.XXXXXX)"
+      N=$(grep -an "^#START_OF_TAR#" "$0" | cut -d: -f1)
+      tail -n +"$((N + 1))" <"$0" > "$TEMP/self.tar.gz" || exit 1
+      ${patchInterpFunc(p.interpPlaceholderLen)}
+      if [ "\${1:-}" = "--extract" ]; then
+      \tif [ -z "\${2:-}" ]; then
+      \t\techo "Usage: $0 --extract <path>"
+      \t\texit 1
+      \tfi
+      \tif [ -e "$2" ]; then
+      \t\techo "Error: $2 already exists"
+      \t\texit 1
+      \tfi
+      \tmkdir -p "$2"
+      \tTARGET=$(cd "$2" && pwd)
+      \ttar -C "$TARGET" -xzf "$TEMP/self.tar.gz" || exit 1
+      ${patchExtractLines}
+      ${extractBinWrappers}
+      \trm -rf "$TEMP"
+      \techo "successfully extracted to $2"
+      \texit 0
+      else
+      \tif [ "\${1:-}" = "--" ]; then
+      \t\tshift
+      \tfi
+      \ttar -C "$TEMP" -xzf "$TEMP/self.tar.gz" || exit 1
+      \ttrap 'rm -rf "$TEMP"' EXIT
+      ${patchExecLines}
+      ${execLines}
+      \texit $?
+      fi
+      #START_OF_TAR#
+      `;
 }
