@@ -152,21 +152,11 @@ if [ "\${1:-}" = "--extract" ]; then
 \tmkdir -p "$2"
 \tTARGET=$(cd "$2" && pwd)
 \ttar -C "$TARGET" -xzf "$TEMP/self.tar.gz" || exit 1
+\tpatch_interp "$TARGET/orig/"${nameLiteral} "$TARGET/lib/"${interpreterLiteral}
 \tmkdir -p "$TARGET/bin"
 \tcat - >"$TARGET/bin/"${nameLiteral} <<-EOF2
 \t\t#!/bin/sh
-\t\treal_interp="$TARGET/lib/"${interpreterLiteral}
-\t\ttmp="\\$(mktemp -d "\\$\{TMPDIR:-/tmp}/"${nameLiteral}.XXXXXX)"
-\t\ttrap 'rm -rf "\\$tmp"' EXIT
-\t\tcp "$TARGET/orig/"${nameLiteral} "\\$tmp/"${nameLiteral}
-\t\tchmod +w "\\$tmp/"${nameLiteral}
-\t\t{
-\t\t\tprintf '%s' "\\$real_interp"
-\t\t\tdd if=/dev/zero bs=1 count=\\$((${p.interpPlaceholderLen} - \\$\{#real_interp})) 2>/dev/null
-\t\t} | dd of="\\$tmp/"${nameLiteral} bs=1 seek=${p.interpOffset} count=${p.interpPlaceholderLen} conv=notrunc 2>/dev/null
-\t\tchmod -w "\\$tmp/"${nameLiteral}
-${envExtractBlock}\t\tLD_LIBRARY_PATH="$TARGET/lib\\$\{LD_LIBRARY_PATH:+:\\$LD_LIBRARY_PATH}" LD_PRELOAD="$TARGET/lib/cleanup_env.so\\$\{LD_PRELOAD:+:\\$LD_PRELOAD}" "\\$tmp/"${nameLiteral} ${addFlagsExtract} "\\$@"
-\t\texit \\$?
+${envExtractBlock}\t\tLD_LIBRARY_PATH="$TARGET/lib\\$\{LD_LIBRARY_PATH:+:\\$LD_LIBRARY_PATH}" LD_PRELOAD="$TARGET/lib/cleanup_env.so\\$\{LD_PRELOAD:+:\\$LD_PRELOAD}" exec "$TARGET/orig/"${nameLiteral} ${addFlagsExtract} "\\$@"
 \tEOF2
 \tchmod +x "$TARGET/bin/"${nameLiteral}
 \trm -rf "$TEMP"
