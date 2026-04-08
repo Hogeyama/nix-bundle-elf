@@ -6,6 +6,7 @@
 
 import { bundlePreload } from "./commands/bundle-preload.ts";
 import { bundleRpath } from "./commands/bundle-rpath.ts";
+import { bundleScript } from "./commands/bundle-script.ts";
 
 const args = process.argv.slice(2);
 const command = args[0];
@@ -18,15 +19,19 @@ switch (command) {
   case "preload":
     bundlePreload(rest);
     break;
+  case "script":
+    bundleScript(rest);
+    break;
   default: {
     const prog = "nix-bundle-elf";
-    console.error(`Usage: ${prog} <command> [options] <binary>
+    console.error(`Usage: ${prog} <command> [options] <binary|script>
 
-Bundle an ELF binary with all its dependencies into a self-contained package.
+Bundle ELF binaries with all dependencies into a self-contained package.
 
 Commands:
-  rpath    Bundle using RPATH rewriting (recommended)
-  preload  Bundle using LD_PRELOAD
+  rpath    Bundle a single binary using RPATH rewriting (recommended)
+  preload  Bundle a single binary using LD_PRELOAD
+  script   Bundle a shell script with multiple ELF binaries
 
 Run '${prog} <command> --help' for command-specific options.`);
     process.exit(1);

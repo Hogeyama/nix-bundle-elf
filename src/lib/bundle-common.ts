@@ -371,7 +371,23 @@ export function copyIncludes(includes: Array<{ src: string; dest: string }>, out
  * Copy libraries to out/lib/, patch their RUNPATH to $ORIGIN, and copy interpreter.
  */
 export function copyAndPatchLibs(libs: string[], interpreterPath: string, outDir: string): void {
-  const libDir = `${outDir}/lib`;
+  copyAndPatchLibsTo(libs, interpreterPath, `${outDir}/lib`);
+}
+
+/**
+ * Copy libraries to out/lib-{name}/, patch their RUNPATH to $ORIGIN, and copy interpreter.
+ * Variant for named library directories (multi-binary bundles).
+ */
+export function copyAndPatchLibsNamed(
+  libs: string[],
+  interpreterPath: string,
+  outDir: string,
+  name: string,
+): void {
+  copyAndPatchLibsTo(libs, interpreterPath, `${outDir}/lib-${name}`);
+}
+
+function copyAndPatchLibsTo(libs: string[], interpreterPath: string, libDir: string): void {
   mkdirSync(libDir, { recursive: true });
 
   // Copy interpreter

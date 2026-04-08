@@ -13,7 +13,7 @@ export interface BinaryInfo {
 }
 
 /** How the bundle's main entry point is invoked. */
-export type EntryConfig = { kind: "binary"; addFlags: string[] };
+export type EntryConfig = { kind: "binary"; addFlags: string[] } | { kind: "script" };
 
 export interface TemplateParams {
   /** Bundle name (temp dir, extract wrapper, etc.). */
@@ -28,6 +28,10 @@ export interface TemplateParams {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+function sanitizeTag(name: string): string {
+  return name.replace(/[^a-zA-Z0-9_]/g, "_");
+}
 
 function indentStr(s: string, tabs: number): string {
   if (!s) return "";
@@ -132,7 +136,11 @@ function assertNever(x: never): never {
 }
 
 /** Generate extract-mode bin/ wrappers. */
-function generateExtractWrappers(p: TemplateParams, envExtractBlock: string): string {
+function generateExtractWrappers(
+  p: TemplateParams,
+  nameLiteral: string,
+  envExtractBlock: string,
+): string {
   switch (p.entry.kind) {
     case "binary": {
       const b = p.binaries[0];
@@ -146,6 +154,30 @@ function generateExtractWrappers(p: TemplateParams, envExtractBlock: string): st
         ${envExtractBlock}\t\t${execLine}
         \tEOF2
         \tchmod +x "$TARGET/bin/"${bn}`;
+    }
+    case "script": {
+      const perBin = p.binaries
+        .map((b) => {
+          const bn = quoteShLiteral(b.name);
+          const tag = sanitizeTag(b.name);
+          const execLine = binaryExecLine(p.type, b, "$TARGET", "\\$", '"\\$@"');
+          return dedent`\
+            \tcat - >"$TARGET/bin/"${bn} <<-EOF_BIN_${tag}
+            \t\t#!/bin/sh
+            \t\t${execLine}
+            \tEOF_BIN_${tag}
+            \tchmod +x "$TARGET/bin/"${bn}`;
+        })
+        .join("\n");
+      return dedent`\
+        \tmkdir -p "$TARGET/bin"
+        ${perBin}
+        \tcat - >"$TARGET/bin/"${nameLiteral} <<-EOF_ENTRY
+        \t\t#!/bin/sh
+        ${envExtractBlock}\t\texport PATH="$TARGET/bin\${PATH:+:\\$PATH}"
+        \t\texec "$TARGET/"'entry.sh' "\\$@"
+        \tEOF_ENTRY
+        \tchmod +x "$TARGET/bin/"${nameLiteral}`;
     }
     default:
       return assertNever(p.entry);
@@ -165,6 +197,32 @@ function generateExecLines(p: TemplateParams, envExecBlock: string): string {
       const ld = quoteShLiteral(b.libDir);
       return `${envExecBlock}\tLD_LIBRARY_PATH="$TEMP/"${ld}"\${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" LD_PRELOAD="$TEMP/"${ld}"/cleanup_env.so\${LD_PRELOAD:+:$LD_PRELOAD}" "$TEMP/orig/"${bn} ${addFlagsExec} "$@"`;
     }
+    case "script": {
+      if (p.type === "rpath") {
+        return dedent`\
+          ${envExecBlock}\texport PATH="$TEMP/orig\${PATH:+:$PATH}"
+          \t"$TEMP/"'entry.sh' "$@"`;
+      }
+      // preload script: need bin/ wrappers for per-binary LD_
+      const binWrappers = p.binaries
+        .map((b) => {
+          const bn = quoteShLiteral(b.name);
+          const tag = sanitizeTag(b.name);
+          const execLine = binaryExecLine(p.type, b, "$TEMP", "\\$", '"\\$@"');
+          return dedent`\
+            \tcat - >"$TEMP/bin/"${bn} <<-EOF_EBIN_${tag}
+            \t\t#!/bin/sh
+            \t\t${execLine}
+            \tEOF_EBIN_${tag}
+            \tchmod +x "$TEMP/bin/"${bn}`;
+        })
+        .join("\n");
+      return dedent`\
+        \tmkdir -p "$TEMP/bin"
+        ${binWrappers}
+        ${envExecBlock}\texport PATH="$TEMP/bin\${PATH:+:$PATH}"
+        \t"$TEMP/"'entry.sh' "$@"`;
+    }
     default:
       return assertNever(p.entry);
   }
@@ -180,7 +238,7 @@ export function generateScript(p: TemplateParams): string {
 
   const patchExecLines = generatePatchLines(p.binaries, "$TEMP");
   const patchExtractLines = generatePatchLines(p.binaries, "$TARGET");
-  const extractBinWrappers = generateExtractWrappers(p, envExtractBlock);
+  const extractBinWrappers = generateExtractWrappers(p, nameLiteral, envExtractBlock);
   const execLines = generateExecLines(p, envExecBlock);
 
   // Keep the trailing newline so the appended tar payload starts on the next line.
