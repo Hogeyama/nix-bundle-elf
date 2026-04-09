@@ -1,8 +1,8 @@
 test_dir := ".test"
 copilot_url := "https://github.com/github/copilot-cli/releases/download/v1.0.14/copilot-linux-x64.tar.gz"
 
-# Run all foreign binary tests
-test: test-rpath-foreign test-preload-foreign test-preload-sea test-flake
+# Run all checks and foreign binary tests
+test: check test-rpath-foreign test-preload-foreign test-preload-sea test-flake
 
 # Download copilot-cli (Node.js SEA, foreign ELF with several deps)
 download-copilot:
@@ -85,15 +85,19 @@ test-flake:
 
 # Format all source files
 format:
-    biome format --write src/
+    bun fmt
 
 # Lint all source files
 lint:
-    biome check src/
+    bun lint
 
 # Type check TypeScript
 typecheck:
-    tsc --noEmit
+    bun run typecheck
+
+# Run lint + typecheck
+check:
+    bun check
 
 # Clean test artifacts
 clean:
