@@ -3,7 +3,7 @@
 // Downloads the database from a GitHub release and resolves the nixpkgs
 // revision from the repository's flake.lock at the same tag.
 
-import { mkdirSync, mkdtempSync } from "node:fs";
+import { mkdirSync, mkdtempSync, renameSync, unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
@@ -35,11 +35,11 @@ function downloadFile(url: string, dest: string): void {
   const result = Bun.spawnSync(["curl", "-fSL", "-o", tmpDest, url]);
   if (result.exitCode !== 0) {
     try {
-      require("node:fs").unlinkSync(tmpDest);
+      unlinkSync(tmpDest);
     } catch {}
     throw new Error(`Failed to download ${url}: ${result.stderr.toString().trim()}`);
   }
-  require("node:fs").renameSync(tmpDest, dest);
+  renameSync(tmpDest, dest);
 }
 
 /** Fetch a URL and return its body as a string. */

@@ -1,8 +1,10 @@
 // bundle-preload: Bundle an ELF binary using LD_PRELOAD.
 
 import {
+  appendFileSync,
   chmodSync,
   copyFileSync,
+  lstatSync,
   mkdirSync,
   readdirSync,
   readFileSync,
@@ -73,7 +75,7 @@ export function bundlePreload(argv: string[]): void {
     for (const entry of readdirSync(libDir)) {
       const fullPath = `${libDir}/${entry}`;
       // Skip symlinks and non-files
-      const stat = require("node:fs").lstatSync(fullPath);
+      const stat = lstatSync(fullPath);
       if (!stat.isFile()) continue;
       // Skip the dynamic linker — patchelf corrupts it
       if (/^ld-linux/.test(entry)) continue;
@@ -134,8 +136,8 @@ export function bundlePreload(argv: string[]): void {
 
     // Write output: script + tar
     writeFileSync(config.output, Buffer.from(script));
-    const tarContent = require("node:fs").readFileSync(tarPath);
-    require("node:fs").appendFileSync(config.output, tarContent);
+    const tarContent = readFileSync(tarPath);
+    appendFileSync(config.output, tarContent);
     chmodSync(config.output, 0o755);
 
     log("");

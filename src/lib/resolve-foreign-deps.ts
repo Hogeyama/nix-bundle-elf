@@ -6,6 +6,7 @@
 // Prints scan results, resolved attrs, and interpreter info.
 
 import { existsSync, readdirSync } from "node:fs";
+import { basename } from "node:path";
 import { nixBuild, nixLocate, nixStoreReferences } from "./nix.ts";
 import { printNeeded } from "./patchelf.ts";
 import type { BuildResult, InterpreterInfo, ResolveResult, ScanResult } from "./types.ts";
@@ -130,8 +131,6 @@ export function findInterpreter(
   resolved: ResolveResult,
   build: BuildResult,
 ): InterpreterInfo | null {
-  const { basename } = require("node:path");
-
   // Strategy 1: ld-linux was explicitly in NEEDED
   if (resolved.interpAttr) {
     const sp = build.attrToStorePath.get(resolved.interpAttr);

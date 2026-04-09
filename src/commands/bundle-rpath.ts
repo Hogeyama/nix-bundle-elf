@@ -1,6 +1,13 @@
 // bundle-rpath: Bundle an ELF binary using RPATH rewriting.
 
-import { chmodSync, copyFileSync, mkdirSync, writeFileSync } from "node:fs";
+import {
+  appendFileSync,
+  chmodSync,
+  copyFileSync,
+  mkdirSync,
+  readFileSync,
+  writeFileSync,
+} from "node:fs";
 import { basename } from "node:path";
 import { createTarGz } from "../lib/archive.ts";
 import {
@@ -97,8 +104,8 @@ function bundleExe(
 
   // Concatenate script + tar
   writeFileSync(config.output, Buffer.from(script));
-  const tarContent = require("node:fs").readFileSync(tarPath);
-  require("node:fs").appendFileSync(config.output, tarContent);
+  const tarContent = readFileSync(tarPath);
+  appendFileSync(config.output, tarContent);
   chmodSync(config.output, 0o755);
 }
 

@@ -1,12 +1,15 @@
 // bundle-script: Bundle a shell script with multiple ELF binaries.
 
 import {
+  appendFileSync,
   chmodSync,
   copyFileSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   readdirSync,
   readFileSync,
+  realpathSync,
   statSync,
   writeFileSync,
 } from "node:fs";
@@ -185,7 +188,7 @@ function parseScriptArgs(argv: string[]): ScriptBundleConfig {
     throw new Error("--extra-lib is only supported with --type preload");
   }
 
-  config.scriptPath = require("node:path").resolve(config.scriptPath);
+  config.scriptPath = resolve(config.scriptPath);
   if (!existsSync(config.scriptPath))
     throw new Error(`script does not exist: ${config.scriptPath}`);
 
@@ -194,13 +197,13 @@ function parseScriptArgs(argv: string[]): ScriptBundleConfig {
   for (const bin of config.binaries) {
     if (seenNames.has(bin.name)) throw new Error(`duplicate --bundle-bin name: ${bin.name}`);
     seenNames.add(bin.name);
-    bin.target = require("node:fs").realpathSync(bin.target);
+    bin.target = realpathSync(bin.target);
     if (!existsSync(bin.target)) throw new Error(`binary does not exist: ${bin.target}`);
   }
 
   // Validate includes
   for (const include of config.includes) {
-    include.src = require("node:fs").realpathSync(include.src);
+    include.src = realpathSync(include.src);
     const st = statSync(include.src);
     if (!st.isFile() && !st.isDirectory()) {
       throw new Error(`--include source must be a file or directory: ${include.src}`);
@@ -313,7 +316,7 @@ export function bundleScript(argv: string[]): void {
         // Patch RUNPATH of bundled libraries so they find siblings
         for (const entry of readdirSync(libDir)) {
           const fullPath = `${libDir}/${entry}`;
-          const stat = require("node:fs").lstatSync(fullPath);
+          const stat = lstatSync(fullPath);
           if (!stat.isFile()) continue;
           if (/^ld-linux/.test(entry)) continue;
           if (!/\.so/.test(entry)) continue;
@@ -395,8 +398,8 @@ export function bundleScript(argv: string[]): void {
 
     // Write output: script + tar
     writeFileSync(config.output, Buffer.from(script));
-    const tarContent = require("node:fs").readFileSync(tarPath);
-    require("node:fs").appendFileSync(config.output, tarContent);
+    const tarContent = readFileSync(tarPath);
+    appendFileSync(config.output, tarContent);
     chmodSync(config.output, 0o755);
 
     log("");
