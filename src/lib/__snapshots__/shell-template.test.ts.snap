@@ -1,0 +1,492 @@
+// Bun Snapshot v1, https://bun.sh/docs/test/snapshots
+
+exports[`generateScript rpath binary 1`] = `
+"#!/bin/sh
+set -u
+TEMP="$(mktemp -d "\${TMPDIR:-/tmp}"/'myapp'.XXXXXX)"
+N=$(grep -an "^#START_OF_TAR#" "$0" | cut -d: -f1)
+tail -n +"$((N + 1))" <"$0" > "$TEMP/self.tar.gz" || exit 1
+patch_interp() {
+	local binary="$1" real_interp="$2" offset="$3"
+	if [ \${#real_interp} -ge 256 ]; then
+		echo "Error: interpreter path too long (\${#real_interp} >= 256)" >&2
+		return 1
+	fi
+	chmod +w "$binary"
+	{
+		printf '%s' "$real_interp"
+		dd if=/dev/zero bs=1 count=$((256 - \${#real_interp})) 2>/dev/null
+	} | dd of="$binary" bs=1 seek="$offset" count=256 conv=notrunc 2>/dev/null
+	chmod -w "$binary"
+}
+if [ "\${1:-}" = "--extract" ]; then
+	if [ -z "\${2:-}" ]; then
+		echo "Usage: $0 --extract <path>"
+		exit 1
+	fi
+	if [ -e "$2" ]; then
+		echo "Error: $2 already exists"
+		exit 1
+	fi
+	mkdir -p "$2"
+	TARGET=$(cd "$2" && pwd)
+	tar -C "$TARGET" -xzf "$TEMP/self.tar.gz" || exit 1
+	patch_interp "$TARGET/orig/"'myapp' "$TARGET/"'lib'/'ld-linux-x86-64.so.2' 1024
+	mkdir -p "$TARGET/bin"
+	cat - >"$TARGET/bin/"'myapp' <<-EOF2
+		#!/bin/sh
+		exec "$TARGET/orig/"'myapp'  "\\$@"
+	EOF2
+	chmod +x "$TARGET/bin/"'myapp'
+	rm -rf "$TEMP"
+	echo "successfully extracted to $2"
+	exit 0
+else
+	if [ "\${1:-}" = "--" ]; then
+		shift
+	fi
+	tar -C "$TEMP" -xzf "$TEMP/self.tar.gz" || exit 1
+	trap 'rm -rf "$TEMP"' EXIT
+	patch_interp "$TEMP/orig/"'myapp' "$TEMP/"'lib'/'ld-linux-x86-64.so.2' 1024
+	"$TEMP/orig/"'myapp'  "$@"
+	exit $?
+fi
+#START_OF_TAR#
+"
+`;
+
+exports[`generateScript preload binary 1`] = `
+"#!/bin/sh
+set -u
+TEMP="$(mktemp -d "\${TMPDIR:-/tmp}"/'myapp'.XXXXXX)"
+N=$(grep -an "^#START_OF_TAR#" "$0" | cut -d: -f1)
+tail -n +"$((N + 1))" <"$0" > "$TEMP/self.tar.gz" || exit 1
+patch_interp() {
+	local binary="$1" real_interp="$2" offset="$3"
+	if [ \${#real_interp} -ge 256 ]; then
+		echo "Error: interpreter path too long (\${#real_interp} >= 256)" >&2
+		return 1
+	fi
+	chmod +w "$binary"
+	{
+		printf '%s' "$real_interp"
+		dd if=/dev/zero bs=1 count=$((256 - \${#real_interp})) 2>/dev/null
+	} | dd of="$binary" bs=1 seek="$offset" count=256 conv=notrunc 2>/dev/null
+	chmod -w "$binary"
+}
+if [ "\${1:-}" = "--extract" ]; then
+	if [ -z "\${2:-}" ]; then
+		echo "Usage: $0 --extract <path>"
+		exit 1
+	fi
+	if [ -e "$2" ]; then
+		echo "Error: $2 already exists"
+		exit 1
+	fi
+	mkdir -p "$2"
+	TARGET=$(cd "$2" && pwd)
+	tar -C "$TARGET" -xzf "$TEMP/self.tar.gz" || exit 1
+	patch_interp "$TARGET/orig/"'myapp' "$TARGET/"'lib'/'ld-linux-x86-64.so.2' 1024
+	mkdir -p "$TARGET/bin"
+	cat - >"$TARGET/bin/"'myapp' <<-EOF2
+		#!/bin/sh
+		LD_LIBRARY_PATH="$TARGET/"'lib'"\\\${LD_LIBRARY_PATH:+:\\$LD_LIBRARY_PATH}" LD_PRELOAD="$TARGET/"'lib'"/cleanup_env.so\\\${LD_PRELOAD:+:\\$LD_PRELOAD}" exec "$TARGET/orig/"'myapp'  "\\$@"
+	EOF2
+	chmod +x "$TARGET/bin/"'myapp'
+	rm -rf "$TEMP"
+	echo "successfully extracted to $2"
+	exit 0
+else
+	if [ "\${1:-}" = "--" ]; then
+		shift
+	fi
+	tar -C "$TEMP" -xzf "$TEMP/self.tar.gz" || exit 1
+	trap 'rm -rf "$TEMP"' EXIT
+	patch_interp "$TEMP/orig/"'myapp' "$TEMP/"'lib'/'ld-linux-x86-64.so.2' 1024
+	LD_LIBRARY_PATH="$TEMP/"'lib'"\${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" LD_PRELOAD="$TEMP/"'lib'"/cleanup_env.so\${LD_PRELOAD:+:$LD_PRELOAD}" "$TEMP/orig/"'myapp'  "$@"
+	exit $?
+fi
+#START_OF_TAR#
+"
+`;
+
+exports[`generateScript rpath script with multiple binaries 1`] = `
+"#!/bin/sh
+set -u
+TEMP="$(mktemp -d "\${TMPDIR:-/tmp}"/'myapp'.XXXXXX)"
+N=$(grep -an "^#START_OF_TAR#" "$0" | cut -d: -f1)
+tail -n +"$((N + 1))" <"$0" > "$TEMP/self.tar.gz" || exit 1
+patch_interp() {
+	local binary="$1" real_interp="$2" offset="$3"
+	if [ \${#real_interp} -ge 256 ]; then
+		echo "Error: interpreter path too long (\${#real_interp} >= 256)" >&2
+		return 1
+	fi
+	chmod +w "$binary"
+	{
+		printf '%s' "$real_interp"
+		dd if=/dev/zero bs=1 count=$((256 - \${#real_interp})) 2>/dev/null
+	} | dd of="$binary" bs=1 seek="$offset" count=256 conv=notrunc 2>/dev/null
+	chmod -w "$binary"
+}
+if [ "\${1:-}" = "--extract" ]; then
+	if [ -z "\${2:-}" ]; then
+		echo "Usage: $0 --extract <path>"
+		exit 1
+	fi
+	if [ -e "$2" ]; then
+		echo "Error: $2 already exists"
+		exit 1
+	fi
+	mkdir -p "$2"
+	TARGET=$(cd "$2" && pwd)
+	tar -C "$TARGET" -xzf "$TEMP/self.tar.gz" || exit 1
+	patch_interp "$TARGET/orig/"'tool1' "$TARGET/"'lib-tool1'/'ld-linux-x86-64.so.2' 100
+	patch_interp "$TARGET/orig/"'tool2' "$TARGET/"'lib-tool2'/'ld-linux-x86-64.so.2' 200
+	mkdir -p "$TARGET/bin"
+	cat - >"$TARGET/bin/"'tool1' <<-EOF_BIN_tool1
+		#!/bin/sh
+		exec "$TARGET/orig/"'tool1' "\\$@"
+	EOF_BIN_tool1
+	chmod +x "$TARGET/bin/"'tool1'
+	cat - >"$TARGET/bin/"'tool2' <<-EOF_BIN_tool2
+		#!/bin/sh
+		exec "$TARGET/orig/"'tool2' "\\$@"
+	EOF_BIN_tool2
+	chmod +x "$TARGET/bin/"'tool2'
+	cat - >"$TARGET/bin/"'myapp' <<-EOF_ENTRY
+		#!/bin/sh
+		export PATH="$TARGET/bin\${PATH:+:\\$PATH}"
+		exec "$TARGET/"'entry.sh' "\\$@"
+	EOF_ENTRY
+	chmod +x "$TARGET/bin/"'myapp'
+	rm -rf "$TEMP"
+	echo "successfully extracted to $2"
+	exit 0
+else
+	if [ "\${1:-}" = "--" ]; then
+		shift
+	fi
+	tar -C "$TEMP" -xzf "$TEMP/self.tar.gz" || exit 1
+	trap 'rm -rf "$TEMP"' EXIT
+	patch_interp "$TEMP/orig/"'tool1' "$TEMP/"'lib-tool1'/'ld-linux-x86-64.so.2' 100
+	patch_interp "$TEMP/orig/"'tool2' "$TEMP/"'lib-tool2'/'ld-linux-x86-64.so.2' 200
+	export PATH="$TEMP/orig\${PATH:+:$PATH}"
+	"$TEMP/"'entry.sh' "$@"
+	exit $?
+fi
+#START_OF_TAR#
+"
+`;
+
+exports[`generateScript preload script with multiple binaries 1`] = `
+"#!/bin/sh
+set -u
+TEMP="$(mktemp -d "\${TMPDIR:-/tmp}"/'myapp'.XXXXXX)"
+N=$(grep -an "^#START_OF_TAR#" "$0" | cut -d: -f1)
+tail -n +"$((N + 1))" <"$0" > "$TEMP/self.tar.gz" || exit 1
+patch_interp() {
+	local binary="$1" real_interp="$2" offset="$3"
+	if [ \${#real_interp} -ge 256 ]; then
+		echo "Error: interpreter path too long (\${#real_interp} >= 256)" >&2
+		return 1
+	fi
+	chmod +w "$binary"
+	{
+		printf '%s' "$real_interp"
+		dd if=/dev/zero bs=1 count=$((256 - \${#real_interp})) 2>/dev/null
+	} | dd of="$binary" bs=1 seek="$offset" count=256 conv=notrunc 2>/dev/null
+	chmod -w "$binary"
+}
+if [ "\${1:-}" = "--extract" ]; then
+	if [ -z "\${2:-}" ]; then
+		echo "Usage: $0 --extract <path>"
+		exit 1
+	fi
+	if [ -e "$2" ]; then
+		echo "Error: $2 already exists"
+		exit 1
+	fi
+	mkdir -p "$2"
+	TARGET=$(cd "$2" && pwd)
+	tar -C "$TARGET" -xzf "$TEMP/self.tar.gz" || exit 1
+	patch_interp "$TARGET/orig/"'alpha' "$TARGET/"'lib-alpha'/'ld-linux-x86-64.so.2' 300
+	patch_interp "$TARGET/orig/"'beta' "$TARGET/"'lib-beta'/'ld-linux-x86-64.so.2' 400
+	mkdir -p "$TARGET/bin"
+	cat - >"$TARGET/bin/"'alpha' <<-EOF_BIN_alpha
+		#!/bin/sh
+		LD_LIBRARY_PATH="$TARGET/"'lib-alpha'"\\\${LD_LIBRARY_PATH:+:\\$LD_LIBRARY_PATH}" LD_PRELOAD="$TARGET/"'lib-alpha'"/cleanup_env.so\\\${LD_PRELOAD:+:\\$LD_PRELOAD}" exec "$TARGET/orig/"'alpha' "\\$@"
+	EOF_BIN_alpha
+	chmod +x "$TARGET/bin/"'alpha'
+	cat - >"$TARGET/bin/"'beta' <<-EOF_BIN_beta
+		#!/bin/sh
+		LD_LIBRARY_PATH="$TARGET/"'lib-beta'"\\\${LD_LIBRARY_PATH:+:\\$LD_LIBRARY_PATH}" LD_PRELOAD="$TARGET/"'lib-beta'"/cleanup_env.so\\\${LD_PRELOAD:+:\\$LD_PRELOAD}" exec "$TARGET/orig/"'beta' "\\$@"
+	EOF_BIN_beta
+	chmod +x "$TARGET/bin/"'beta'
+	cat - >"$TARGET/bin/"'myapp' <<-EOF_ENTRY
+		#!/bin/sh
+		export PATH="$TARGET/bin\${PATH:+:\\$PATH}"
+		exec "$TARGET/"'entry.sh' "\\$@"
+	EOF_ENTRY
+	chmod +x "$TARGET/bin/"'myapp'
+	rm -rf "$TEMP"
+	echo "successfully extracted to $2"
+	exit 0
+else
+	if [ "\${1:-}" = "--" ]; then
+		shift
+	fi
+	tar -C "$TEMP" -xzf "$TEMP/self.tar.gz" || exit 1
+	trap 'rm -rf "$TEMP"' EXIT
+	patch_interp "$TEMP/orig/"'alpha' "$TEMP/"'lib-alpha'/'ld-linux-x86-64.so.2' 300
+	patch_interp "$TEMP/orig/"'beta' "$TEMP/"'lib-beta'/'ld-linux-x86-64.so.2' 400
+	mkdir -p "$TEMP/bin"
+	cat - >"$TEMP/bin/"'alpha' <<-EOF_EBIN_alpha
+		#!/bin/sh
+		LD_LIBRARY_PATH="$TEMP/"'lib-alpha'"\\\${LD_LIBRARY_PATH:+:\\$LD_LIBRARY_PATH}" LD_PRELOAD="$TEMP/"'lib-alpha'"/cleanup_env.so\\\${LD_PRELOAD:+:\\$LD_PRELOAD}" exec "$TEMP/orig/"'alpha' "\\$@"
+	EOF_EBIN_alpha
+	chmod +x "$TEMP/bin/"'alpha'
+	cat - >"$TEMP/bin/"'beta' <<-EOF_EBIN_beta
+		#!/bin/sh
+		LD_LIBRARY_PATH="$TEMP/"'lib-beta'"\\\${LD_LIBRARY_PATH:+:\\$LD_LIBRARY_PATH}" LD_PRELOAD="$TEMP/"'lib-beta'"/cleanup_env.so\\\${LD_PRELOAD:+:\\$LD_PRELOAD}" exec "$TEMP/orig/"'beta' "\\$@"
+	EOF_EBIN_beta
+	chmod +x "$TEMP/bin/"'beta'
+	export PATH="$TEMP/bin\${PATH:+:$PATH}"
+	"$TEMP/"'entry.sh' "$@"
+	exit $?
+fi
+#START_OF_TAR#
+"
+`;
+
+exports[`generateScript binary with addFlags 1`] = `
+"#!/bin/sh
+set -u
+TEMP="$(mktemp -d "\${TMPDIR:-/tmp}"/'myapp'.XXXXXX)"
+N=$(grep -an "^#START_OF_TAR#" "$0" | cut -d: -f1)
+tail -n +"$((N + 1))" <"$0" > "$TEMP/self.tar.gz" || exit 1
+patch_interp() {
+	local binary="$1" real_interp="$2" offset="$3"
+	if [ \${#real_interp} -ge 256 ]; then
+		echo "Error: interpreter path too long (\${#real_interp} >= 256)" >&2
+		return 1
+	fi
+	chmod +w "$binary"
+	{
+		printf '%s' "$real_interp"
+		dd if=/dev/zero bs=1 count=$((256 - \${#real_interp})) 2>/dev/null
+	} | dd of="$binary" bs=1 seek="$offset" count=256 conv=notrunc 2>/dev/null
+	chmod -w "$binary"
+}
+if [ "\${1:-}" = "--extract" ]; then
+	if [ -z "\${2:-}" ]; then
+		echo "Usage: $0 --extract <path>"
+		exit 1
+	fi
+	if [ -e "$2" ]; then
+		echo "Error: $2 already exists"
+		exit 1
+	fi
+	mkdir -p "$2"
+	TARGET=$(cd "$2" && pwd)
+	tar -C "$TARGET" -xzf "$TEMP/self.tar.gz" || exit 1
+	patch_interp "$TARGET/orig/"'myapp' "$TARGET/"'lib'/'ld-linux-x86-64.so.2' 1024
+	mkdir -p "$TARGET/bin"
+	cat - >"$TARGET/bin/"'myapp' <<-EOF2
+		#!/bin/sh
+		exec "$TARGET/orig/"'myapp' '--verbose' '--config='"$TARGET"'/app.cfg' "\\$@"
+	EOF2
+	chmod +x "$TARGET/bin/"'myapp'
+	rm -rf "$TEMP"
+	echo "successfully extracted to $2"
+	exit 0
+else
+	if [ "\${1:-}" = "--" ]; then
+		shift
+	fi
+	tar -C "$TEMP" -xzf "$TEMP/self.tar.gz" || exit 1
+	trap 'rm -rf "$TEMP"' EXIT
+	patch_interp "$TEMP/orig/"'myapp' "$TEMP/"'lib'/'ld-linux-x86-64.so.2' 1024
+	"$TEMP/orig/"'myapp' '--verbose' '--config='"$TEMP"'/app.cfg' "$@"
+	exit $?
+fi
+#START_OF_TAR#
+"
+`;
+
+exports[`generateScript env directives (set, prefix, suffix) 1`] = `
+"#!/bin/sh
+set -u
+TEMP="$(mktemp -d "\${TMPDIR:-/tmp}"/'myapp'.XXXXXX)"
+N=$(grep -an "^#START_OF_TAR#" "$0" | cut -d: -f1)
+tail -n +"$((N + 1))" <"$0" > "$TEMP/self.tar.gz" || exit 1
+patch_interp() {
+	local binary="$1" real_interp="$2" offset="$3"
+	if [ \${#real_interp} -ge 256 ]; then
+		echo "Error: interpreter path too long (\${#real_interp} >= 256)" >&2
+		return 1
+	fi
+	chmod +w "$binary"
+	{
+		printf '%s' "$real_interp"
+		dd if=/dev/zero bs=1 count=$((256 - \${#real_interp})) 2>/dev/null
+	} | dd of="$binary" bs=1 seek="$offset" count=256 conv=notrunc 2>/dev/null
+	chmod -w "$binary"
+}
+if [ "\${1:-}" = "--extract" ]; then
+	if [ -z "\${2:-}" ]; then
+		echo "Usage: $0 --extract <path>"
+		exit 1
+	fi
+	if [ -e "$2" ]; then
+		echo "Error: $2 already exists"
+		exit 1
+	fi
+	mkdir -p "$2"
+	TARGET=$(cd "$2" && pwd)
+	tar -C "$TARGET" -xzf "$TEMP/self.tar.gz" || exit 1
+	patch_interp "$TARGET/orig/"'myapp' "$TARGET/"'lib'/'ld-linux-x86-64.so.2' 1024
+	mkdir -p "$TARGET/bin"
+	cat - >"$TARGET/bin/"'myapp' <<-EOF2
+		#!/bin/sh
+		MY_VAR='hello'
+		export MY_VAR
+		PATH="$TARGET"'/bin'\\\${PATH:+':'\\\${PATH}}
+		export PATH
+		LD_LIBRARY_PATH=\\\${LD_LIBRARY_PATH:+\\\${LD_LIBRARY_PATH}':'}"$TARGET"'/lib'
+		export LD_LIBRARY_PATH
+		exec "$TARGET/orig/"'myapp'  "\\$@"
+	EOF2
+	chmod +x "$TARGET/bin/"'myapp'
+	rm -rf "$TEMP"
+	echo "successfully extracted to $2"
+	exit 0
+else
+	if [ "\${1:-}" = "--" ]; then
+		shift
+	fi
+	tar -C "$TEMP" -xzf "$TEMP/self.tar.gz" || exit 1
+	trap 'rm -rf "$TEMP"' EXIT
+	patch_interp "$TEMP/orig/"'myapp' "$TEMP/"'lib'/'ld-linux-x86-64.so.2' 1024
+MY_VAR='hello'
+export MY_VAR
+PATH="$TEMP"'/bin'\${PATH:+':'\${PATH}}
+export PATH
+LD_LIBRARY_PATH=\${LD_LIBRARY_PATH:+\${LD_LIBRARY_PATH}':'}"$TEMP"'/lib'
+export LD_LIBRARY_PATH
+	"$TEMP/orig/"'myapp'  "$@"
+	exit $?
+fi
+#START_OF_TAR#
+"
+`;
+
+exports[`generateScript custom interpPlaceholderLen 1`] = `
+"#!/bin/sh
+set -u
+TEMP="$(mktemp -d "\${TMPDIR:-/tmp}"/'myapp'.XXXXXX)"
+N=$(grep -an "^#START_OF_TAR#" "$0" | cut -d: -f1)
+tail -n +"$((N + 1))" <"$0" > "$TEMP/self.tar.gz" || exit 1
+patch_interp() {
+	local binary="$1" real_interp="$2" offset="$3"
+	if [ \${#real_interp} -ge 512 ]; then
+		echo "Error: interpreter path too long (\${#real_interp} >= 512)" >&2
+		return 1
+	fi
+	chmod +w "$binary"
+	{
+		printf '%s' "$real_interp"
+		dd if=/dev/zero bs=1 count=$((512 - \${#real_interp})) 2>/dev/null
+	} | dd of="$binary" bs=1 seek="$offset" count=512 conv=notrunc 2>/dev/null
+	chmod -w "$binary"
+}
+if [ "\${1:-}" = "--extract" ]; then
+	if [ -z "\${2:-}" ]; then
+		echo "Usage: $0 --extract <path>"
+		exit 1
+	fi
+	if [ -e "$2" ]; then
+		echo "Error: $2 already exists"
+		exit 1
+	fi
+	mkdir -p "$2"
+	TARGET=$(cd "$2" && pwd)
+	tar -C "$TARGET" -xzf "$TEMP/self.tar.gz" || exit 1
+	patch_interp "$TARGET/orig/"'myapp' "$TARGET/"'lib'/'ld-linux-x86-64.so.2' 1024
+	mkdir -p "$TARGET/bin"
+	cat - >"$TARGET/bin/"'myapp' <<-EOF2
+		#!/bin/sh
+		exec "$TARGET/orig/"'myapp'  "\\$@"
+	EOF2
+	chmod +x "$TARGET/bin/"'myapp'
+	rm -rf "$TEMP"
+	echo "successfully extracted to $2"
+	exit 0
+else
+	if [ "\${1:-}" = "--" ]; then
+		shift
+	fi
+	tar -C "$TEMP" -xzf "$TEMP/self.tar.gz" || exit 1
+	trap 'rm -rf "$TEMP"' EXIT
+	patch_interp "$TEMP/orig/"'myapp' "$TEMP/"'lib'/'ld-linux-x86-64.so.2' 1024
+	"$TEMP/orig/"'myapp'  "$@"
+	exit $?
+fi
+#START_OF_TAR#
+"
+`;
+
+exports[`generateScript special characters in names 1`] = `
+"#!/bin/sh
+set -u
+TEMP="$(mktemp -d "\${TMPDIR:-/tmp}"/'my-app.v2'.XXXXXX)"
+N=$(grep -an "^#START_OF_TAR#" "$0" | cut -d: -f1)
+tail -n +"$((N + 1))" <"$0" > "$TEMP/self.tar.gz" || exit 1
+patch_interp() {
+	local binary="$1" real_interp="$2" offset="$3"
+	if [ \${#real_interp} -ge 256 ]; then
+		echo "Error: interpreter path too long (\${#real_interp} >= 256)" >&2
+		return 1
+	fi
+	chmod +w "$binary"
+	{
+		printf '%s' "$real_interp"
+		dd if=/dev/zero bs=1 count=$((256 - \${#real_interp})) 2>/dev/null
+	} | dd of="$binary" bs=1 seek="$offset" count=256 conv=notrunc 2>/dev/null
+	chmod -w "$binary"
+}
+if [ "\${1:-}" = "--extract" ]; then
+	if [ -z "\${2:-}" ]; then
+		echo "Usage: $0 --extract <path>"
+		exit 1
+	fi
+	if [ -e "$2" ]; then
+		echo "Error: $2 already exists"
+		exit 1
+	fi
+	mkdir -p "$2"
+	TARGET=$(cd "$2" && pwd)
+	tar -C "$TARGET" -xzf "$TEMP/self.tar.gz" || exit 1
+	patch_interp "$TARGET/orig/"'my-tool' "$TARGET/"'lib'/'ld-linux-x86-64.so.2' 1024
+	mkdir -p "$TARGET/bin"
+	cat - >"$TARGET/bin/"'my-tool' <<-EOF2
+		#!/bin/sh
+		exec "$TARGET/orig/"'my-tool'  "\\$@"
+	EOF2
+	chmod +x "$TARGET/bin/"'my-tool'
+	rm -rf "$TEMP"
+	echo "successfully extracted to $2"
+	exit 0
+else
+	if [ "\${1:-}" = "--" ]; then
+		shift
+	fi
+	tar -C "$TEMP" -xzf "$TEMP/self.tar.gz" || exit 1
+	trap 'rm -rf "$TEMP"' EXIT
+	patch_interp "$TEMP/orig/"'my-tool' "$TEMP/"'lib'/'ld-linux-x86-64.so.2' 1024
+	"$TEMP/orig/"'my-tool'  "$@"
+	exit $?
+fi
+#START_OF_TAR#
+"
+`;

@@ -2,7 +2,7 @@ test_dir := ".test"
 copilot_url := "https://github.com/github/copilot-cli/releases/download/v1.0.14/copilot-linux-x64.tar.gz"
 
 # Run all checks and foreign binary tests
-test: check test-rpath-foreign test-preload-foreign test-preload-sea test-flake
+test: check test-bun test-rpath-foreign test-preload-foreign test-preload-sea test-flake
 
 # Download copilot-cli (Node.js SEA, foreign ELF with several deps)
 download-copilot:
@@ -79,6 +79,9 @@ test-preload-sea: download-copilot
     echo "$output" | grep -qi "copilot"
     echo "PASS: test-preload-sea (NOTE segments preserved)"
 
+test-bun:
+    bun test
+
 test-flake:
     #!/usr/bin/env bash
     nix flake check
@@ -93,7 +96,7 @@ lint:
 
 # Type check TypeScript
 typecheck:
-    bun run typecheck
+    bun typecheck
 
 # Run lint + typecheck
 check:
