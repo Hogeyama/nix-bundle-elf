@@ -1,83 +1,96 @@
 test_dir := ".test"
-copilot_url := "https://github.com/github/copilot-cli/releases/download/v1.0.14/copilot-linux-x64.tar.gz"
+foreign_bin := "test-foreign/test-foreign"
 
 # Run all checks and foreign binary tests
-test: check test-bun test-rpath-foreign test-preload-foreign test-preload-sea test-flake
+test: check test-bun test-rpath-foreign test-preload-foreign test-preload-foreign-dlopen test-preload-foreign-self-exec test-flake
 
-# Download copilot-cli (Node.js SEA, foreign ELF with several deps)
-download-copilot:
-    mkdir -p {{ test_dir }}/bin
-    @if [ ! -f {{ test_dir }}/bin/copilot ]; then \
-        echo "==> Downloading copilot-cli..."; \
-        curl -sL {{ copilot_url }} | tar xz -C {{ test_dir }}/bin; \
+# Build the foreign test binary (C binary with stripped RPATH)
+build-foreign:
+    @if [ ! -f {{ foreign_bin }} ]; then \
+        echo "==> Building foreign test binary..."; \
+        gcc -o {{ foreign_bin }} test-foreign/test-foreign.c -ldl; \
+        patchelf --set-rpath "" {{ foreign_bin }}; \
     else \
-        echo "==> copilot-cli already downloaded"; \
+        echo "==> Foreign test binary already built"; \
     fi
 
-# Test bundle-rpath with a foreign binary (copilot-cli)
-test-rpath-foreign: download-copilot
+# Test bundle-rpath with a foreign binary
+test-rpath-foreign: build-foreign
     #!/usr/bin/env bash
     set -euo pipefail
     echo "==> Testing bundle-rpath with foreign binary"
-    rm -f {{ test_dir }}/copilot-rpath
-    bun run ./src/cli.ts rpath --format exe -o {{ test_dir }}/copilot-rpath {{ test_dir }}/bin/copilot
+    rm -f {{ test_dir }}/foreign-rpath
+    bun run ./src/cli.ts rpath --format exe -o {{ test_dir }}/foreign-rpath {{ foreign_bin }}
     echo "--- execute mode ---"
-    output=$({{ test_dir }}/copilot-rpath -- --version 2>&1) || true
+    output=$({{ test_dir }}/foreign-rpath -- --version)
     echo "$output"
-    echo "$output" | grep -qi "copilot"
+    echo "$output" | grep -q "test-foreign 1.0"
     echo "--- extract mode ---"
-    rm -rf {{ test_dir }}/copilot-rpath-extracted
-    {{ test_dir }}/copilot-rpath --extract {{ test_dir }}/copilot-rpath-extracted
-    output=$({{ test_dir }}/copilot-rpath-extracted/bin/copilot-rpath --version 2>&1) || true
+    rm -rf {{ test_dir }}/foreign-rpath-extracted
+    {{ test_dir }}/foreign-rpath --extract {{ test_dir }}/foreign-rpath-extracted
+    output=$({{ test_dir }}/foreign-rpath-extracted/bin/foreign-rpath --version)
     echo "$output"
-    echo "$output" | grep -qi "copilot"
+    echo "$output" | grep -q "test-foreign 1.0"
     echo "PASS: test-rpath-foreign"
 
-# Test bundle-preload with a foreign binary (copilot-cli)
-test-preload-foreign: download-copilot
+# Test bundle-preload with a foreign binary
+test-preload-foreign: build-foreign
     #!/usr/bin/env bash
     set -euo pipefail
     echo "==> Testing bundle-preload with foreign binary"
-    rm -f {{ test_dir }}/copilot-preload
-    bun run ./src/cli.ts preload -o {{ test_dir }}/copilot-preload {{ test_dir }}/bin/copilot
+    rm -f {{ test_dir }}/foreign-preload
+    bun run ./src/cli.ts preload -o {{ test_dir }}/foreign-preload {{ foreign_bin }}
     echo "--- execute mode ---"
-    output=$({{ test_dir }}/copilot-preload -- --version 2>&1) || true
+    output=$({{ test_dir }}/foreign-preload -- --version)
     echo "$output"
-    echo "$output" | grep -qi "copilot"
+    echo "$output" | grep -q "test-foreign 1.0"
     echo "--- extract mode ---"
-    rm -rf {{ test_dir }}/copilot-preload-extracted
-    {{ test_dir }}/copilot-preload --extract {{ test_dir }}/copilot-preload-extracted
-    output=$({{ test_dir }}/copilot-preload-extracted/bin/copilot-preload --version 2>&1) || true
+    rm -rf {{ test_dir }}/foreign-preload-extracted
+    {{ test_dir }}/foreign-preload --extract {{ test_dir }}/foreign-preload-extracted
+    output=$({{ test_dir }}/foreign-preload-extracted/bin/foreign-preload --version)
     echo "$output"
-    echo "$output" | grep -qi "copilot"
+    echo "$output" | grep -q "test-foreign 1.0"
     echo "PASS: test-preload-foreign"
 
-# Test that preload preserves Node.js SEA (rpath corrupts NOTE segments)
-
-# The rpath version may fail or produce a broken binary, while preload works.
-test-preload-sea: download-copilot
+# Test that dlopen works in the bundled binary (preload + extra-lib)
+test-preload-foreign-dlopen: build-foreign
     #!/usr/bin/env bash
     set -euo pipefail
-    echo "==> Testing that preload preserves Node.js SEA NOTE segments"
-
-    # Preload version: should work because it doesn't use --set-rpath
-    rm -f {{ test_dir }}/copilot-sea-preload
-    bun run ./src/cli.ts preload -o {{ test_dir }}/copilot-sea-preload {{ test_dir }}/bin/copilot
-    echo "--- preload: extract and check ---"
-    rm -rf {{ test_dir }}/sea-preload-extracted
-    {{ test_dir }}/copilot-sea-preload --extract {{ test_dir }}/sea-preload-extracted
-
-    # The extracted binary should NOT have RPATH set on it (preload uses LD_LIBRARY_PATH)
-    rpath=$(patchelf --print-rpath {{ test_dir }}/sea-preload-extracted/orig/copilot-sea-preload 2>/dev/null || echo "")
-    echo "preload orig RPATH: '$rpath'"
-    # RPATH should be empty (no --set-rpath was applied)
-    [ -z "$rpath" ]
-
-    # Should run correctly
-    output=$({{ test_dir }}/sea-preload-extracted/bin/copilot-sea-preload --version 2>&1) || true
+    echo "==> Testing dlopen in bundled foreign binary"
+    rm -f {{ test_dir }}/foreign-dlopen
+    bun run ./src/cli.ts preload --extra-lib libz.so.1 -o {{ test_dir }}/foreign-dlopen {{ foreign_bin }}
+    echo "--- execute mode ---"
+    output=$({{ test_dir }}/foreign-dlopen --)
     echo "$output"
-    echo "$output" | grep -qi "copilot"
-    echo "PASS: test-preload-sea (NOTE segments preserved)"
+    echo "$output" | grep -q "dlopen: zlib"
+    echo "--- extract mode ---"
+    rm -rf {{ test_dir }}/foreign-dlopen-extracted
+    {{ test_dir }}/foreign-dlopen --extract {{ test_dir }}/foreign-dlopen-extracted
+    output=$({{ test_dir }}/foreign-dlopen-extracted/bin/foreign-dlopen)
+    echo "$output"
+    echo "$output" | grep -q "dlopen: zlib"
+    echo "PASS: test-preload-foreign-dlopen"
+
+# Test that self-exec works in the bundled binary
+test-preload-foreign-self-exec: build-foreign
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo "==> Testing self-exec in bundled foreign binary"
+    rm -f {{ test_dir }}/foreign-selfexec
+    bun run ./src/cli.ts preload -o {{ test_dir }}/foreign-selfexec {{ foreign_bin }}
+    echo "--- execute mode ---"
+    output=$({{ test_dir }}/foreign-selfexec -- --self-exec)
+    echo "$output"
+    echo "$output" | grep -q "self-exec: re-executing"
+    echo "$output" | grep -q "test-foreign 1.0"
+    echo "--- extract mode ---"
+    rm -rf {{ test_dir }}/foreign-selfexec-extracted
+    {{ test_dir }}/foreign-selfexec --extract {{ test_dir }}/foreign-selfexec-extracted
+    output=$({{ test_dir }}/foreign-selfexec-extracted/bin/foreign-selfexec --self-exec)
+    echo "$output"
+    echo "$output" | grep -q "self-exec: re-executing"
+    echo "$output" | grep -q "test-foreign 1.0"
+    echo "PASS: test-preload-foreign-self-exec"
 
 test-bun:
     bun test
@@ -105,3 +118,4 @@ check:
 # Clean test artifacts
 clean:
     rm -rf {{ test_dir }}
+    rm -f {{ foreign_bin }}
