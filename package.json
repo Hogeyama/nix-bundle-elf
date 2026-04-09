@@ -3,7 +3,8 @@
     "fmt": "biome check --write .",
     "lint": "biome check .",
     "typecheck": "bun run tsc --noEmit",
-    "check": "bun run lint && bun run typecheck"
+    "check": "bun run lint && bun run typecheck",
+    "test": "bun test"
   },
   "dependencies": {},
   "devDependencies": {
