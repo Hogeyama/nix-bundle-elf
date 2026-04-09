@@ -92,6 +92,66 @@ let
       { name = "cat"; target = "${pkgs.coreutils}/bin/cat"; }
     ];
   };
+
+  # extraLibs test: bundle a dlopen-only library (libnss_dns.so.2) with curl
+  test-extra-libs = single-exe {
+    name = "curl";
+    target = "${pkgs.curl}/bin/curl";
+    type = "preload";
+    extraLibs = [ "libnss_dns.so.2" ];
+  };
+
+  # resolveWith test: provide a specific .so as fallback
+  # Build a minimal binary whose RPATH doesn't include zlib, then resolve via --resolve-with
+  test-resolve-with-bin = pkgs.runCommand "test-resolve-with-bin"
+    { nativeBuildInputs = [ pkgs.gcc pkgs.patchelf ]; }
+    ''
+      mkdir -p $out/bin
+      cat > test.c <<'CEOF'
+      #include <zlib.h>
+      #include <stdio.h>
+      int main() { printf("zlib %s\n", zlibVersion()); return 0; }
+      CEOF
+      gcc -o $out/bin/test-resolve-with test.c -lz -L${pkgs.zlib}/lib -I${pkgs.zlib.dev}/include
+      # Strip zlib from RPATH so it can't be resolved via RPATH alone
+      patchelf --set-rpath "" $out/bin/test-resolve-with
+    '';
+  test-resolve-with = single-exe {
+    name = "test-resolve-with";
+    target = "${test-resolve-with-bin}/bin/test-resolve-with";
+    resolveWith = [ "${pkgs.zlib}/lib/libz.so.1" ];
+  };
+
+  # bundle-script + env
+  test-script-entry-env = pkgs.writeScript "test-entry-env" ''
+    #!/bin/sh
+    printenv NIX_BUNDLE_TEST_SCRIPT_SET
+  '';
+  test-bundle-script-env = bundle-script {
+    name = "test-script-env";
+    script = test-script-entry-env;
+    binaries = [
+      { name = "printenv"; target = "${pkgs.coreutils}/bin/printenv"; }
+    ];
+    env = [
+      { key = "NIX_BUNDLE_TEST_SCRIPT_SET"; action = "replace"; value = "script_env_ok"; }
+    ];
+  };
+
+  # bundle-script + extraFiles
+  test-script-entry-extrafiles = pkgs.writeScript "test-entry-extrafiles" ''
+    #!/bin/sh
+    ROOT="$(cd "$(dirname "$0")" && pwd)"
+    cat "$ROOT/data/greeting.txt"
+  '';
+  test-bundle-script-extrafiles = bundle-script {
+    name = "test-script-extrafiles";
+    script = test-script-entry-extrafiles;
+    binaries = [
+      { name = "cat"; target = "${pkgs.coreutils}/bin/cat"; }
+    ];
+    extraFiles = { "data/greeting.txt" = pkgs.writeText "greeting" "EXTRAFILES_OK"; };
+  };
 in
 {
   # curl --version で transitive な依存を含むバンドルが動作することを確認
@@ -589,6 +649,120 @@ in
       echo "$output" | grep -q "coreutils"
 
       echo "PASS: script-bundle-multi-preload-extract"
+      mkdir -p $out
+    '';
+
+  # extraLibs: verify that dlopen-only library gets bundled
+  extra-libs-bundled = pkgs.runCommand "check-extra-libs-bundled"
+    { }
+    ''
+      extractdir="$TMPDIR/extracted"
+      ${test-extra-libs} --extract "$extractdir"
+
+      # libnss_dns.so.2 should be in the bundle even though it's not in NEEDED
+      ls "$extractdir/lib/"
+      test -n "$(find "$extractdir/lib" -name "libnss_dns.so*" -print -quit)"
+
+      # curl should still work
+      output=$("$extractdir/bin/curl" --version)
+      echo "$output"
+      echo "$output" | grep -q "curl"
+
+      echo "PASS: extra-libs-bundled"
+      mkdir -p $out
+    '';
+
+  # extraLibs: verify that dlopen-only library works in exec mode
+  extra-libs-run = pkgs.runCommand "check-extra-libs-run"
+    { }
+    ''
+      output=$(${test-extra-libs} -- --version)
+      echo "$output"
+      echo "$output" | grep -q "curl"
+      echo "PASS: extra-libs-run"
+      mkdir -p $out
+    '';
+
+  # resolveWith: verify that a library provided via --resolve-with gets bundled
+  resolve-with-run = pkgs.runCommand "check-resolve-with-run"
+    { }
+    ''
+      output=$(${test-resolve-with} --)
+      echo "$output"
+      echo "$output" | grep -q "zlib"
+      echo "PASS: resolve-with-run"
+      mkdir -p $out
+    '';
+
+  resolve-with-extract = pkgs.runCommand "check-resolve-with-extract"
+    { }
+    ''
+      extractdir="$TMPDIR/extracted"
+      ${test-resolve-with} --extract "$extractdir"
+
+      # libz should be present in the bundle
+      ls "$extractdir/lib/"
+      test -n "$(find "$extractdir/lib" -name "libz.so*" -print -quit)"
+
+      # binary should run correctly
+      output=$("$extractdir/bin/test-resolve-with")
+      echo "$output"
+      echo "$output" | grep -q "zlib"
+
+      echo "PASS: resolve-with-extract"
+      mkdir -p $out
+    '';
+
+  # bundle-script + env: verify environment variables work in script bundles
+  script-bundle-env-run = pkgs.runCommand "check-script-bundle-env-run"
+    { }
+    ''
+      output=$(${test-bundle-script-env} --)
+      echo "$output"
+      test "$output" = "script_env_ok"
+      echo "PASS: script-bundle-env-run"
+      mkdir -p $out
+    '';
+
+  script-bundle-env-extract = pkgs.runCommand "check-script-bundle-env-extract"
+    { }
+    ''
+      extractdir="$TMPDIR/extracted"
+      ${test-bundle-script-env} --extract "$extractdir"
+
+      output=$("$extractdir/bin/test-script-env")
+      echo "$output"
+      test "$output" = "script_env_ok"
+
+      echo "PASS: script-bundle-env-extract"
+      mkdir -p $out
+    '';
+
+  # bundle-script + extraFiles: verify included files are accessible from script
+  script-bundle-extrafiles-run = pkgs.runCommand "check-script-bundle-extrafiles-run"
+    { }
+    ''
+      output=$(${test-bundle-script-extrafiles} --)
+      echo "$output"
+      echo "$output" | grep -q "EXTRAFILES_OK"
+      echo "PASS: script-bundle-extrafiles-run"
+      mkdir -p $out
+    '';
+
+  script-bundle-extrafiles-extract = pkgs.runCommand "check-script-bundle-extrafiles-extract"
+    { }
+    ''
+      extractdir="$TMPDIR/extracted"
+      ${test-bundle-script-extrafiles} --extract "$extractdir"
+
+      # File should be at the expected path
+      test -f "$extractdir/data/greeting.txt"
+
+      output=$("$extractdir/bin/test-script-extrafiles")
+      echo "$output"
+      echo "$output" | grep -q "EXTRAFILES_OK"
+
+      echo "PASS: script-bundle-extrafiles-extract"
       mkdir -p $out
     '';
 }
