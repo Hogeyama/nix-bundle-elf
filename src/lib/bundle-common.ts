@@ -423,7 +423,17 @@ export function setPlaceholderInterpreter(binaryPath: string): number {
   }
 
   const offsetResult = Bun.spawnSync(["grep", "-boa", INTERP_PLACEHOLDER_TAG, binaryPath]);
+  if (offsetResult.exitCode !== 0) {
+    throw new Error(
+      `Failed to find interpreter placeholder offset in ${binaryPath}: ${offsetResult.stderr.toString().trim()}`,
+    );
+  }
   const offsetLine = offsetResult.stdout.toString().trim().split("\n")[0];
   const offset = Number.parseInt(offsetLine.split(":")[0], 10);
+  if (Number.isNaN(offset)) {
+    throw new Error(
+      `Failed to parse interpreter placeholder offset from grep output: ${offsetLine}`,
+    );
+  }
   return offset - 1; // account for leading "/"
 }
