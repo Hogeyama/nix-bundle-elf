@@ -20,6 +20,7 @@ import {
   copyIncludes,
   gatherAllDeps,
   INTERP_PLACEHOLDER_LEN,
+  isElfBinary,
   setPlaceholderInterpreter,
 } from "../lib/bundle-common.ts";
 import { CLEANUP_ENV_C } from "../lib/cleanup-env-source.ts";
@@ -233,17 +234,6 @@ function parseScriptArgs(argv: string[]): ScriptBundleConfig {
   }
 
   return config;
-}
-
-function isElfBinary(path: string): boolean {
-  const magic = readFileSync(path).subarray(0, 4);
-  return (
-    magic.length === 4 &&
-    magic[0] === 0x7f &&
-    magic[1] === 0x45 &&
-    magic[2] === 0x4c &&
-    magic[3] === 0x46
-  );
 }
 
 export function bundleScript(argv: string[]): void {

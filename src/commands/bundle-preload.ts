@@ -16,6 +16,7 @@ import {
   copyIncludes,
   gatherAllDeps,
   INTERP_PLACEHOLDER_LEN,
+  isElfBinary,
   parseArgs,
   setPlaceholderInterpreter,
 } from "../lib/bundle-common.ts";
@@ -26,17 +27,6 @@ import { generateScript } from "../lib/shell-template.ts";
 
 function log(msg: string): void {
   console.error(msg);
-}
-
-function isElfBinary(path: string): boolean {
-  const magic = readFileSync(path).subarray(0, 4);
-  return (
-    magic.length === 4 &&
-    magic[0] === 0x7f &&
-    magic[1] === 0x45 &&
-    magic[2] === 0x4c &&
-    magic[3] === 0x46
-  );
 }
 
 export function bundlePreload(argv: string[]): void {

@@ -6,6 +6,7 @@ import {
   cpSync,
   existsSync,
   mkdirSync,
+  readFileSync,
   realpathSync,
   statSync,
 } from "node:fs";
@@ -19,6 +20,18 @@ import type { BundleConfig } from "./types.ts";
 
 function log(msg: string): void {
   console.error(msg);
+}
+
+/** Check if a file starts with the ELF magic number (\x7fELF). */
+export function isElfBinary(path: string): boolean {
+  const magic = readFileSync(path).subarray(0, 4);
+  return (
+    magic.length === 4 &&
+    magic[0] === 0x7f &&
+    magic[1] === 0x45 &&
+    magic[2] === 0x4c &&
+    magic[3] === 0x46
+  );
 }
 
 export const INTERP_PLACEHOLDER_LEN = 256;
@@ -241,6 +254,10 @@ export interface GatheredDeps {
  * First tries RPATH traversal; falls back to nix-locate if needed.
  */
 export function gatherAllDeps(config: BundleConfig, tmpdir: string): GatheredDeps {
+  if (!isElfBinary(config.target)) {
+    throw new Error(`Not an ELF binary: ${config.target}`);
+  }
+
   log("==> Gathering dependencies via RPATH");
 
   let target = config.target;
