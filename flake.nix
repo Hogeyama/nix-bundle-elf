@@ -780,8 +780,6 @@
             pkgs.gnutar
             pkgs.gnugrep
             pkgs.coreutils
-            pkgs.typescript
-            pkgs.biome
           ];
         };
 
