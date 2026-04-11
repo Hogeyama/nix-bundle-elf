@@ -1,6 +1,11 @@
 // Generate self-extracting shell scripts for bundles.
 
-import { quoteShLiteral, serializeAddFlagWordsSh, serializeEnvDirectivesSh } from "./add-flags.ts";
+import {
+  quoteShLiteral,
+  serializeAddFlagWordsSh,
+  serializeEnvDirectivesSh,
+  usesOrigPlaceholder,
+} from "./add-flags.ts";
 import type { EnvDirective } from "./types.ts";
 
 /** Per-binary metadata embedded in the generated shell script. */
@@ -138,23 +143,62 @@ function assertNever(x: never): never {
   throw new Error(`unexpected entry kind: ${(x as EntryConfig).kind}`);
 }
 
+/** True iff any envDirective or addFlag references `%ORIG`. */
+function needsOrigResolution(p: TemplateParams): boolean {
+  for (const d of p.envDirectives) {
+    if (usesOrigPlaceholder(d.value)) return true;
+  }
+  if (p.entry.kind === "binary") {
+    for (const f of p.entry.addFlags) {
+      if (usesOrigPlaceholder(f)) return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * POSIX sh block that resolves `$0` to an absolute path and assigns it to
+ * `ORIG`. Handles three invocation forms: absolute path, relative path, and
+ * PATH lookup. When `heredoc` is true, every dollar sign that should be
+ * evaluated at the enclosing heredoc consumer's runtime (not at heredoc-
+ * creation time) is escaped with a backslash.
+ */
+function origResolutionBlock(heredoc: boolean): string {
+  const d = heredoc ? "\\$" : "$";
+  return (
+    `case "${d}0" in\n` +
+    `\t/*) ORIG=${d}0 ;;\n` +
+    `\t*/*) ORIG="${d}(cd -P -- "${d}(dirname -- "${d}0")" && pwd)/${d}(basename -- "${d}0")" ;;\n` +
+    `\t*) ORIG="${d}(command -v -- "${d}0" 2>/dev/null || printf '%s' "${d}0")" ;;\n` +
+    `esac`
+  );
+}
+
 /** Generate extract-mode bin/ wrappers. */
 function generateExtractWrappers(
   p: TemplateParams,
   nameLiteral: string,
   envExtractBlock: string,
+  emitOrig: boolean,
 ): string {
+  // In wrappers, %ORIG must resolve to the wrapper's OWN $0 at wrapper
+  // runtime. Emit the resolution block in the heredoc body (escaped so the
+  // backslashes survive into the generated wrapper).
+  const origBlock = emitOrig ? `${indentStr(origResolutionBlock(true), 2)}\n` : "";
+
   switch (p.entry.kind) {
     case "binary": {
       const b = p.binaries[0];
       const bn = quoteShLiteral(b.name);
-      const addFlagsExtract = serializeAddFlagWordsSh(p.entry.addFlags, "$TARGET");
+      const addFlagsExtract = serializeAddFlagWordsSh(p.entry.addFlags, "$TARGET", {
+        origExpr: emitOrig ? "\\$ORIG" : undefined,
+      });
       const execLine = binaryExecLine(p.type, b, "$TARGET", "\\$", `${addFlagsExtract} "\\$@"`);
       return dedent`\
         \tmkdir -p "$TARGET/bin"
         \tcat - >"$TARGET/bin/"${bn} <<-EOF2
         \t\t#!/bin/sh
-        ${envExtractBlock}\t\t${execLine}
+        ${origBlock}${envExtractBlock}\t\t${execLine}
         \tEOF2
         \tchmod +x "$TARGET/bin/"${bn}`;
     }
@@ -177,7 +221,7 @@ function generateExtractWrappers(
         ${perBin}
         \tcat - >"$TARGET/bin/"${nameLiteral} <<-EOF_ENTRY
         \t\t#!/bin/sh
-        ${envExtractBlock}\t\texport PATH="$TARGET/bin\${PATH:+:\\$PATH}"
+        ${origBlock}${envExtractBlock}\t\texport PATH="$TARGET/bin\${PATH:+:\\$PATH}"
         \t\texec "$TARGET/"'entry.sh' "\\$@"
         \tEOF_ENTRY
         \tchmod +x "$TARGET/bin/"${nameLiteral}`;
@@ -188,12 +232,13 @@ function generateExtractWrappers(
 }
 
 /** Generate execute-mode invocation lines. */
-function generateExecLines(p: TemplateParams, envExecBlock: string): string {
+function generateExecLines(p: TemplateParams, envExecBlock: string, emitOrig: boolean): string {
+  const origOpt = { origExpr: emitOrig ? "$ORIG" : undefined };
   switch (p.entry.kind) {
     case "binary": {
       const b = p.binaries[0];
       const bn = quoteShLiteral(b.name);
-      const addFlagsExec = serializeAddFlagWordsSh(p.entry.addFlags, "$TEMP");
+      const addFlagsExec = serializeAddFlagWordsSh(p.entry.addFlags, "$TEMP", origOpt);
       if (p.type === "rpath") {
         return `${envExecBlock}\t"$TEMP/orig/"${bn} ${addFlagsExec} "$@"`;
       }
@@ -234,20 +279,29 @@ function generateExecLines(p: TemplateParams, envExecBlock: string): string {
 /** Generate a self-extracting shell script for any bundle configuration. */
 export function generateScript(p: TemplateParams): string {
   const nameLiteral = quoteShLiteral(p.name);
-  const envExec = serializeEnvDirectivesSh(p.envDirectives, "$TEMP");
-  const envExtract = serializeEnvDirectivesSh(p.envDirectives, "$TARGET", { heredoc: true });
+  const emitOrig = needsOrigResolution(p);
+  const execOrigOpt = { origExpr: emitOrig ? "$ORIG" : undefined };
+  const extractOrigOpt = { origExpr: emitOrig ? "\\$ORIG" : undefined };
+  const envExec = serializeEnvDirectivesSh(p.envDirectives, "$TEMP", execOrigOpt);
+  const envExtract = serializeEnvDirectivesSh(p.envDirectives, "$TARGET", {
+    heredoc: true,
+    ...extractOrigOpt,
+  });
   const envExecBlock = envExec ? `${envExec}\n` : "";
   const envExtractBlock = envExtract ? `${indentStr(envExtract, 2)}\n` : "";
 
   const patchExecLines = generatePatchLines(p.binaries, "$TEMP");
   const patchExtractLines = generatePatchLines(p.binaries, "$TARGET");
-  const extractBinWrappers = generateExtractWrappers(p, nameLiteral, envExtractBlock);
-  const execLines = generateExecLines(p, envExecBlock);
+  const extractBinWrappers = generateExtractWrappers(p, nameLiteral, envExtractBlock, emitOrig);
+  const execLines = generateExecLines(p, envExecBlock, emitOrig);
+  // Top-of-script $0 → $ORIG resolution. Only emitted when %ORIG is actually
+  // referenced, so existing bundles produce byte-identical scripts.
+  const origBlock = emitOrig ? `${origResolutionBlock(false)}\n` : "";
 
   return dedent`\
       #!/bin/sh
       set -u
-      TEMP="$(mktemp -d "\${TMPDIR:-/tmp}"/${nameLiteral}.XXXXXX)"
+      ${origBlock}TEMP="$(mktemp -d "\${TMPDIR:-/tmp}"/${nameLiteral}.XXXXXX)"
       N=$(grep -an "^#START_OF_TAR#" "$0" | cut -d: -f1)
       tail -n +"$((N + 1))" <"$0" > "$TEMP/self.tar.gz" || exit 1
       ${patchInterpFunc(p.interpPlaceholderLen)}

@@ -1,5 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { quoteShLiteral, serializeAddFlagWordsSh, serializeEnvDirectivesSh } from "./add-flags.ts";
+import {
+  quoteShLiteral,
+  serializeAddFlagWordsSh,
+  serializeEnvDirectivesSh,
+  usesOrigPlaceholder,
+} from "./add-flags.ts";
 import type { EnvDirective } from "./types.ts";
 
 // ---------------------------------------------------------------------------
@@ -78,6 +83,30 @@ describe("serializeAddFlagWordsSh", () => {
   test("different rootExpr", () => {
     expect(serializeAddFlagWordsSh(["%ROOT/lib"], "$TARGET")).toBe('"$TARGET"' + "'/lib'");
   });
+
+  test("%ORIG is left literal when origExpr is not provided", () => {
+    expect(serializeAddFlagWordsSh(["%ORIG/x"], "$TEMP")).toBe("'%ORIG/x'");
+  });
+
+  test("%ORIG is expanded when origExpr is provided", () => {
+    expect(serializeAddFlagWordsSh(["%ORIG"], "$TEMP", { origExpr: "$ORIG" })).toBe('"$ORIG"');
+  });
+
+  test("%ORIG with heredoc-escaped origExpr", () => {
+    expect(serializeAddFlagWordsSh(["%ORIG"], "$TARGET", { origExpr: "\\$ORIG" })).toBe(
+      '"\\$ORIG"',
+    );
+  });
+
+  test("%ROOT and %ORIG mixed in one flag", () => {
+    expect(serializeAddFlagWordsSh(["--cfg=%ORIG:%ROOT/bin"], "$TEMP", { origExpr: "$ORIG" })).toBe(
+      "'--cfg='" + '"$ORIG"' + "':'" + '"$TEMP"' + "'/bin'",
+    );
+  });
+
+  test("%%ORIG is preserved as literal %ORIG", () => {
+    expect(serializeAddFlagWordsSh(["%%ORIG"], "$TEMP", { origExpr: "$ORIG" })).toBe("'%ORIG'");
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -148,5 +177,60 @@ describe("serializeEnvDirectivesSh", () => {
     const directives: EnvDirective[] = [{ kind: "set", name: "EMPTY", value: "" }];
     const result = serializeEnvDirectivesSh(directives, "$TEMP");
     expect(result).toBe("EMPTY=''\nexport EMPTY");
+  });
+
+  test("set directive with %ORIG expands when origExpr is provided", () => {
+    const directives: EnvDirective[] = [{ kind: "set", name: "NAS_BIN_PATH", value: "%ORIG" }];
+    const result = serializeEnvDirectivesSh(directives, "$TEMP", { origExpr: "$ORIG" });
+    expect(result).toBe('NAS_BIN_PATH="$ORIG"\nexport NAS_BIN_PATH');
+  });
+
+  test("set directive with %ORIG is literal when origExpr is omitted", () => {
+    const directives: EnvDirective[] = [{ kind: "set", name: "NAS_BIN_PATH", value: "%ORIG" }];
+    const result = serializeEnvDirectivesSh(directives, "$TEMP");
+    expect(result).toBe("NAS_BIN_PATH='%ORIG'\nexport NAS_BIN_PATH");
+  });
+
+  test("heredoc mode with escaped origExpr", () => {
+    const directives: EnvDirective[] = [{ kind: "set", name: "NAS_BIN_PATH", value: "%ORIG" }];
+    const result = serializeEnvDirectivesSh(directives, "$TARGET", {
+      heredoc: true,
+      origExpr: "\\$ORIG",
+    });
+    expect(result).toBe('NAS_BIN_PATH="\\$ORIG"\nexport NAS_BIN_PATH');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// usesOrigPlaceholder
+// ---------------------------------------------------------------------------
+
+describe("usesOrigPlaceholder", () => {
+  test("plain %ORIG", () => {
+    expect(usesOrigPlaceholder("%ORIG")).toBe(true);
+  });
+
+  test("%ORIG in middle of path", () => {
+    expect(usesOrigPlaceholder("/foo/%ORIG/bar")).toBe(true);
+  });
+
+  test("no %ORIG", () => {
+    expect(usesOrigPlaceholder("plain text")).toBe(false);
+  });
+
+  test("%%ORIG is escaped and does not count", () => {
+    expect(usesOrigPlaceholder("%%ORIG")).toBe(false);
+  });
+
+  test("%%%ORIG resolves to literal % + real %ORIG", () => {
+    expect(usesOrigPlaceholder("%%%ORIG")).toBe(true);
+  });
+
+  test("%ORIGIN is not a %ORIG reference", () => {
+    expect(usesOrigPlaceholder("%ORIGIN")).toBe(false);
+  });
+
+  test("%ROOT alone is not a %ORIG reference", () => {
+    expect(usesOrigPlaceholder("%ROOT/bin")).toBe(false);
   });
 });

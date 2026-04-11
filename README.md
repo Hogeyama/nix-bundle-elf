@@ -70,7 +70,12 @@ Builds a derivation that outputs a self-extracting executable.
 - `resolveWith` (optional): List of `.so` file paths used as fallback when
   RPATH resolution fails. Matched by basename (soname).
 - `addFlags` (optional): List of arguments injected before user-provided args.
-  Use `%ROOT` to refer to the extracted bundle root, and `%%` for a literal `%`.
+  Placeholders: `%ROOT` = extracted bundle root, `%ORIG` = absolute path of
+  the self-extracting script itself (useful for re-exec / self-reference
+  scenarios such as bind-mounting the script into a sandbox), `%%` = literal
+  `%`. `%ORIG` support is opt-in — referencing it causes the generated script
+  to resolve `$0` at startup; bundles that do not use `%ORIG` produce
+  byte-identical output to earlier versions.
 
 ### `lib.aws-lambda-zip { pkgs; name; target; }`
 
@@ -118,8 +123,10 @@ nix-bundle-elf preload --extra-lib libutil.so.1 ~/.local/bin/copilot -o ./copilo
 
 Both CLI commands accept repeatable `--include <src>:<dest>`,
 `--add-flag <arg>`, and `--resolve-with <file>` options.
-`--add-flag` arguments are inserted before user arguments, `%ROOT` expands
-to the extracted bundle root at runtime, and `%%` escapes a literal `%`.
+`--add-flag` arguments are inserted before user arguments. Placeholders:
+`%ROOT` expands to the extracted bundle root at runtime, `%ORIG` expands to
+the absolute path of the self-extracting script itself, and `%%` escapes a
+literal `%`.
 `--resolve-with` provides a `.so` file as a fallback when RPATH resolution
 fails (matched by basename).
 

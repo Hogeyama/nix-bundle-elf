@@ -88,6 +88,43 @@ describe("generateScript", () => {
     expect(generateScript(makeParams({ interpPlaceholderLen: 512 }))).toMatchSnapshot();
   });
 
+  test("env directive with %ORIG injects ORIG resolution block", () => {
+    const script = generateScript(
+      makeParams({
+        envDirectives: [{ kind: "set", name: "NAS_BIN_PATH", value: "%ORIG" }],
+      }),
+    );
+    // Main-script ORIG resolution (unescaped) must be present.
+    expect(script).toContain('case "$0" in');
+    expect(script).toContain("ORIG=$0");
+    // Exec-mode env export references $ORIG at script runtime.
+    expect(script).toContain('NAS_BIN_PATH="$ORIG"');
+    // Extract-mode wrapper heredoc must also capture ORIG for the generated
+    // wrapper itself (via escaped $0 references).
+    expect(script).toContain('case "\\$0" in');
+    expect(script).toContain('NAS_BIN_PATH="\\$ORIG"');
+  });
+
+  test("env directive without %ORIG does NOT inject ORIG resolution block", () => {
+    const script = generateScript(
+      makeParams({
+        envDirectives: [{ kind: "set", name: "FOO", value: "bar" }],
+      }),
+    );
+    expect(script).not.toContain("ORIG=");
+    expect(script).not.toContain('case "$0" in');
+  });
+
+  test("addFlags with %ORIG injects resolution block", () => {
+    const script = generateScript(
+      makeParams({
+        entry: { kind: "binary", addFlags: ["--nas-bin=%ORIG"] },
+      }),
+    );
+    expect(script).toContain('case "$0" in');
+    expect(script).toContain('"$ORIG"');
+  });
+
   test("special characters in names", () => {
     expect(
       generateScript(
