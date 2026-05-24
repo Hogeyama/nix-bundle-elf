@@ -128,6 +128,7 @@
           , type ? "rpath"
           , extraFiles ? { }
           , extraLibs ? [ ]
+          , resolveWith ? [ ]
           , env ? [ ]
           , ...
           }:
@@ -142,6 +143,8 @@
                 extraFiles);
             extraLibArgs =
               pkgs.lib.concatMapStrings (lib: " --extra-lib ${pkgs.lib.escapeShellArg lib}") extraLibs;
+            resolveWithArgs =
+              pkgs.lib.concatMapStrings (p: " --resolve-with ${pkgs.lib.escapeShellArg (toString p)}") resolveWith;
             envToArgs = e:
               if e.action == "replace" then
                 " --env ${pkgs.lib.escapeShellArg e.key} ${pkgs.lib.escapeShellArg e.value}"
@@ -158,7 +161,7 @@
                 || throw "bundle-script: extraLibs is not supported with rpath strategy (use type = \"preload\" instead)";
               pkgs.runCommand name { nativeBuildInputs = [ nix-bundle-elf ]; }
                 ''
-                  nix-bundle-elf script --no-nix-locate --type ${type} -o "$TMPDIR/${name}"${bundleBinArgs}${includeArgs}${extraLibArgs}${envArgs} ${script}
+                  nix-bundle-elf script --no-nix-locate --type ${type} -o "$TMPDIR/${name}"${bundleBinArgs}${includeArgs}${extraLibArgs}${resolveWithArgs}${envArgs} ${script}
                   mv "$TMPDIR/${name}" $out
                 '';
           in

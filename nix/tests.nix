@@ -138,6 +138,20 @@ let
     ];
   };
 
+  # bundle-script + resolveWith
+  test-script-entry-resolve-with = pkgs.writeScript "test-entry-resolve-with" ''
+    #!/bin/sh
+    test-resolve-with
+  '';
+  test-bundle-script-resolve-with = bundle-script {
+    name = "test-script-resolve-with";
+    script = test-script-entry-resolve-with;
+    binaries = [
+      { name = "test-resolve-with"; target = "${test-resolve-with-bin}/bin/test-resolve-with"; }
+    ];
+    resolveWith = [ "${pkgs.zlib}/lib/libz.so.1" ];
+  };
+
   # bundle-script + extraFiles
   test-script-entry-extrafiles = pkgs.writeScript "test-entry-extrafiles" ''
     #!/bin/sh
@@ -735,6 +749,35 @@ in
       test "$output" = "script_env_ok"
 
       echo "PASS: script-bundle-env-extract"
+      mkdir -p $out
+    '';
+
+  # bundle-script + resolveWith: verify --resolve-with lib gets bundled per-binary
+  script-bundle-resolve-with-run = pkgs.runCommand "check-script-bundle-resolve-with-run"
+    { }
+    ''
+      output=$(${test-bundle-script-resolve-with} --)
+      echo "$output"
+      echo "$output" | grep -q "zlib"
+      echo "PASS: script-bundle-resolve-with-run"
+      mkdir -p $out
+    '';
+
+  script-bundle-resolve-with-extract = pkgs.runCommand "check-script-bundle-resolve-with-extract"
+    { }
+    ''
+      extractdir="$TMPDIR/extracted"
+      ${test-bundle-script-resolve-with} --extract "$extractdir"
+
+      # libz should be present in the per-binary lib dir
+      ls "$extractdir/lib-test-resolve-with/"
+      test -n "$(find "$extractdir/lib-test-resolve-with" -name "libz.so*" -print -quit)"
+
+      output=$("$extractdir/bin/test-script-resolve-with")
+      echo "$output"
+      echo "$output" | grep -q "zlib"
+
+      echo "PASS: script-bundle-resolve-with-extract"
       mkdir -p $out
     '';
 
