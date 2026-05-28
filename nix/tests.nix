@@ -166,6 +166,23 @@ let
     ];
     extraFiles = { "data/greeting.txt" = pkgs.writeText "greeting" "EXTRAFILES_OK"; };
   };
+
+  # bundle-script: bundle name collides with a bundled binary name.
+  # The entry script invokes the colliding name by PATH lookup, which used to
+  # recurse into the extract-mode entry launcher and loop forever.
+  test-script-entry-namecollision = pkgs.writeScript "test-entry-namecollision" ''
+    #!/bin/sh
+    echo "COLLISION_START"
+    cat --version | head -1
+    echo "COLLISION_END"
+  '';
+  test-bundle-script-namecollision = bundle-script {
+    name = "cat";
+    script = test-script-entry-namecollision;
+    binaries = [
+      { name = "cat"; target = "${pkgs.coreutils}/bin/cat"; }
+    ];
+  };
 in
 {
   # curl --version で transitive な依存を含むバンドルが動作することを確認
@@ -558,7 +575,7 @@ in
       test -f "$extractdir/entry.sh"
       test -f "$extractdir/orig/cat"
       test -d "$extractdir/lib-cat"
-      test -x "$extractdir/bin/cat"
+      test -x "$extractdir/libexec/cat"
       test -x "$extractdir/bin/test-script-single"
 
       # Run via wrapper
@@ -598,8 +615,8 @@ in
       test -f "$extractdir/orig/cat"
       test -d "$extractdir/lib-curl"
       test -d "$extractdir/lib-cat"
-      test -x "$extractdir/bin/curl"
-      test -x "$extractdir/bin/cat"
+      test -x "$extractdir/libexec/curl"
+      test -x "$extractdir/libexec/cat"
       test -x "$extractdir/bin/test-script-multi"
 
       # Verify per-binary RPATH
@@ -651,8 +668,8 @@ in
       test -d "$extractdir/lib-cat"
       test -f "$extractdir/lib-curl/cleanup_env.so"
       test -f "$extractdir/lib-cat/cleanup_env.so"
-      test -x "$extractdir/bin/curl"
-      test -x "$extractdir/bin/cat"
+      test -x "$extractdir/libexec/curl"
+      test -x "$extractdir/libexec/cat"
       test -x "$extractdir/bin/test-script-multi-preload"
 
       # Run via wrapper
@@ -806,6 +823,39 @@ in
       echo "$output" | grep -q "EXTRAFILES_OK"
 
       echo "PASS: script-bundle-extrafiles-extract"
+      mkdir -p $out
+    '';
+
+  # Regression: bundle name == binary name must not infinite-loop.
+  script-bundle-namecollision-run = pkgs.runCommand "check-script-bundle-namecollision-run"
+    { }
+    ''
+      output=$(timeout 30 ${test-bundle-script-namecollision} --)
+      echo "$output"
+      echo "$output" | grep -q "COLLISION_START"
+      echo "$output" | grep -q "COLLISION_END"
+      echo "$output" | grep -q "coreutils"
+      echo "PASS: script-bundle-namecollision-run"
+      mkdir -p $out
+    '';
+
+  script-bundle-namecollision-extract = pkgs.runCommand "check-script-bundle-namecollision-extract"
+    { }
+    ''
+      extractdir="$TMPDIR/extracted"
+      ${test-bundle-script-namecollision} --extract "$extractdir"
+
+      # Public entry launcher and private binary wrapper coexist without clobbering.
+      test -x "$extractdir/bin/cat"
+      test -x "$extractdir/libexec/cat"
+
+      output=$(timeout 30 "$extractdir/bin/cat")
+      echo "$output"
+      echo "$output" | grep -q "COLLISION_START"
+      echo "$output" | grep -q "COLLISION_END"
+      echo "$output" | grep -q "coreutils"
+
+      echo "PASS: script-bundle-namecollision-extract"
       mkdir -p $out
     '';
 }

@@ -143,20 +143,20 @@ if [ "\${1:-}" = "--extract" ]; then
 	tar -C "$TARGET" -xzf "$TEMP/self.tar.gz" || exit 1
 	patch_interp "$TARGET/orig/"'tool1' "$TARGET/"'lib-tool1'/'ld-linux-x86-64.so.2' 100
 	patch_interp "$TARGET/orig/"'tool2' "$TARGET/"'lib-tool2'/'ld-linux-x86-64.so.2' 200
-	mkdir -p "$TARGET/bin"
-	cat - >"$TARGET/bin/"'tool1' <<-EOF_BIN_tool1
+	mkdir -p "$TARGET/bin" "$TARGET/libexec"
+	cat - >"$TARGET/libexec/"'tool1' <<-EOF_BIN_tool1
 		#!/bin/sh
 		exec "$TARGET/orig/"'tool1' "\\$@"
 	EOF_BIN_tool1
-	chmod +x "$TARGET/bin/"'tool1'
-	cat - >"$TARGET/bin/"'tool2' <<-EOF_BIN_tool2
+	chmod +x "$TARGET/libexec/"'tool1'
+	cat - >"$TARGET/libexec/"'tool2' <<-EOF_BIN_tool2
 		#!/bin/sh
 		exec "$TARGET/orig/"'tool2' "\\$@"
 	EOF_BIN_tool2
-	chmod +x "$TARGET/bin/"'tool2'
+	chmod +x "$TARGET/libexec/"'tool2'
 	cat - >"$TARGET/bin/"'myapp' <<-EOF_ENTRY
 		#!/bin/sh
-		export PATH="$TARGET/bin\${PATH:+:\\$PATH}"
+		export PATH="$TARGET/libexec\${PATH:+:\\$PATH}"
 		exec "$TARGET/"'entry.sh' "\\$@"
 	EOF_ENTRY
 	chmod +x "$TARGET/bin/"'myapp'
@@ -212,20 +212,20 @@ if [ "\${1:-}" = "--extract" ]; then
 	tar -C "$TARGET" -xzf "$TEMP/self.tar.gz" || exit 1
 	patch_interp "$TARGET/orig/"'alpha' "$TARGET/"'lib-alpha'/'ld-linux-x86-64.so.2' 300
 	patch_interp "$TARGET/orig/"'beta' "$TARGET/"'lib-beta'/'ld-linux-x86-64.so.2' 400
-	mkdir -p "$TARGET/bin"
-	cat - >"$TARGET/bin/"'alpha' <<-EOF_BIN_alpha
+	mkdir -p "$TARGET/bin" "$TARGET/libexec"
+	cat - >"$TARGET/libexec/"'alpha' <<-EOF_BIN_alpha
 		#!/bin/sh
 		LD_LIBRARY_PATH="$TARGET/"'lib-alpha'"\\\${LD_LIBRARY_PATH:+:\\$LD_LIBRARY_PATH}" LD_PRELOAD="$TARGET/"'lib-alpha'"/cleanup_env.so\\\${LD_PRELOAD:+:\\$LD_PRELOAD}" exec "$TARGET/orig/"'alpha' "\\$@"
 	EOF_BIN_alpha
-	chmod +x "$TARGET/bin/"'alpha'
-	cat - >"$TARGET/bin/"'beta' <<-EOF_BIN_beta
+	chmod +x "$TARGET/libexec/"'alpha'
+	cat - >"$TARGET/libexec/"'beta' <<-EOF_BIN_beta
 		#!/bin/sh
 		LD_LIBRARY_PATH="$TARGET/"'lib-beta'"\\\${LD_LIBRARY_PATH:+:\\$LD_LIBRARY_PATH}" LD_PRELOAD="$TARGET/"'lib-beta'"/cleanup_env.so\\\${LD_PRELOAD:+:\\$LD_PRELOAD}" exec "$TARGET/orig/"'beta' "\\$@"
 	EOF_BIN_beta
-	chmod +x "$TARGET/bin/"'beta'
+	chmod +x "$TARGET/libexec/"'beta'
 	cat - >"$TARGET/bin/"'myapp' <<-EOF_ENTRY
 		#!/bin/sh
-		export PATH="$TARGET/bin\${PATH:+:\\$PATH}"
+		export PATH="$TARGET/libexec\${PATH:+:\\$PATH}"
 		exec "$TARGET/"'entry.sh' "\\$@"
 	EOF_ENTRY
 	chmod +x "$TARGET/bin/"'myapp'

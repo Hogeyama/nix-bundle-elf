@@ -203,25 +203,29 @@ function generateExtractWrappers(
         \tchmod +x "$TARGET/bin/"${bn}`;
     }
     case "script": {
+      // Binary wrappers live in libexec/, kept separate from the public
+      // bin/ entry launcher. Otherwise a binary whose name equals the bundle
+      // name would have its wrapper overwritten by the entry launcher, and
+      // entry.sh's PATH lookup of that name would recurse into the launcher.
       const perBin = p.binaries
         .map((b) => {
           const bn = quoteShLiteral(b.name);
           const tag = sanitizeTag(b.name);
           const execLine = binaryExecLine(p.type, b, "$TARGET", "\\$", '"\\$@"');
           return dedent`\
-            \tcat - >"$TARGET/bin/"${bn} <<-EOF_BIN_${tag}
+            \tcat - >"$TARGET/libexec/"${bn} <<-EOF_BIN_${tag}
             \t\t#!/bin/sh
             \t\t${execLine}
             \tEOF_BIN_${tag}
-            \tchmod +x "$TARGET/bin/"${bn}`;
+            \tchmod +x "$TARGET/libexec/"${bn}`;
         })
         .join("\n");
       return dedent`\
-        \tmkdir -p "$TARGET/bin"
+        \tmkdir -p "$TARGET/bin" "$TARGET/libexec"
         ${perBin}
         \tcat - >"$TARGET/bin/"${nameLiteral} <<-EOF_ENTRY
         \t\t#!/bin/sh
-        ${origBlock}${envExtractBlock}\t\texport PATH="$TARGET/bin\${PATH:+:\\$PATH}"
+        ${origBlock}${envExtractBlock}\t\texport PATH="$TARGET/libexec\${PATH:+:\\$PATH}"
         \t\texec "$TARGET/"'entry.sh' "\\$@"
         \tEOF_ENTRY
         \tchmod +x "$TARGET/bin/"${nameLiteral}`;
