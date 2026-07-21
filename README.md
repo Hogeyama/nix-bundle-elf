@@ -208,3 +208,56 @@ nix develop -c just test
 - The produced artifact includes glibc and shared libs from your build
   environment. Portability is good in many cases, but not guaranteed if
   the target requires host facilities (e.g., NSS modules, CA certs).
+
+### NSS modules (user lookups, DNS/hostname resolution)
+
+glibc resolves users, groups, **and hostnames** through NSS. Which backend it
+uses for each database is chosen by the **target host's** `/etc/nsswitch.conf`,
+and each backend is loaded by a runtime `dlopen` — so NSS modules are **not**
+discovered via NEEDED/RPATH and are **not bundled automatically**.
+
+When the target host's `nsswitch.conf` names a backend that is not in the
+bundle, the bundled glibc falls back to an absolute `/nix/store/...glibc.../lib`
+path that does not exist on the target, and the lookup silently returns nothing.
+Only `files` and `dns` are built into `libc.so.6` (glibc ≥ 2.34); everything
+else is an external `libnss_<service>.so.2`. The symptom depends on which
+database is affected — a few examples of the same underlying failure:
+
+- `passwd`/`group`/`shadow` → user/group lookups fail. e.g. OpenSSH aborts at
+  startup with `No user exists for uid 0`.
+- `hosts` → hostname resolution fails, so the program cannot reach anything by
+  name (DNS/`getaddrinfo` returns nothing, connections fail).
+
+| `nsswitch.conf` entry | module | provided by |
+|---|---|---|
+| `passwd: compat` (Debian/Ubuntu default) | `libnss_compat.so.2` | glibc |
+| `hosts: ... mdns4_minimal ...` (Avahi/mDNS) | `libnss_mdns4_minimal.so.2` | `nssmdns` |
+| `hosts: ... resolve ...` (systemd-resolved) | `libnss_resolve.so.2` | systemd |
+| `hosts: ... myhostname` | `libnss_myhostname.so.2` | systemd |
+| `passwd: ... sss` | `libnss_sss.so.2` | sssd |
+
+Fix (preload strategy / flake `extraLibs`): bundle the required module(s). For
+glibc-provided modules the CLI can resolve them by soname:
+
+```bash
+nix-bundle-elf preload --extra-lib libnss_compat.so.2 -o ./ssh "$(command -v ssh)"
+```
+
+Modules provided by packages other than glibc are not on the target's RPATH, so
+bundle them by absolute path (flake `extraLibs`):
+
+```nix
+bundle.single-exe {
+  inherit pkgs;
+  name = "ssh";
+  target = "${pkgs.openssh}/bin/ssh";
+  type = "preload";
+  extraLibs = [
+    "${pkgs.glibc}/lib/libnss_compat.so.2"       # passwd: compat
+    "${pkgs.systemd}/lib/libnss_resolve.so.2"    # hosts: ... resolve (systemd-resolved)
+  ];
+}
+```
+
+Each module must match the bundled glibc version and may pull in further
+dependencies of its own (e.g. `libnss_dns.so.2` needs `libresolv.so.2`).
