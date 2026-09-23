@@ -261,3 +261,9 @@ bundle.single-exe {
 
 Each module must match the bundled glibc version and may pull in further
 dependencies of its own (e.g. `libnss_dns.so.2` needs `libresolv.so.2`).
+
+## License
+
+MIT; see [LICENSE](LICENSE). This includes the generated self-extracting
+shell scripts and `cleanup_env.c` code embedded in bundles. Bundled executables
+and third-party libraries retain their own licenses.
