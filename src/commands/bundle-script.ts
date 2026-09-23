@@ -14,7 +14,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { basename, dirname, isAbsolute, resolve } from "node:path";
-import { createTarGz } from "../lib/archive.ts";
+import { createTarGz, makeBundleDirectoriesWritable } from "../lib/archive.ts";
 import {
   copyAndPatchLibsNamed,
   copyIncludes,
@@ -398,6 +398,11 @@ export function bundleScript(argv: string[]): void {
       `${outDir}/nix-bundle-elf-manifest.json`,
       `${JSON.stringify({ schemaVersion: 1, files: origins }, null, 2)}\n`,
     );
+
+    // Nix store includes retain read-only directory modes when copied. Tar
+    // preserves those modes, preventing the recipient from replacing files
+    // after --extract and preventing the temporary bundle from being removed.
+    makeBundleDirectoriesWritable(outDir);
 
     // Create tar.gz
     const tarPath = `${tmpdir}/bundle.tar.gz`;
