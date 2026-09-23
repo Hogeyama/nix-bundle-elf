@@ -29,6 +29,9 @@ test("read-only copied assets extract into owner-writable directories for cleanu
     chmodSync(outside, 0o555);
 
     cpSync(source, copied, { recursive: true });
+    // Bun's cpSync does not preserve directory modes, so force the copied
+    // assets read-only to mirror a nix-store-style payload.
+    chmodSync(join(copied, "assets"), 0o555);
     expect(statSync(join(copied, "assets")).mode & 0o200).toBe(0);
     makeBundleDirectoriesWritable(copied);
     expect(statSync(outside).mode & 0o200).toBe(0);
@@ -45,6 +48,7 @@ test("read-only copied assets extract into owner-writable directories for cleanu
   } finally {
     chmodSync(join(source, "assets"), 0o755);
     chmodSync(outside, 0o755);
+    if (existsSync(copied)) makeBundleDirectoriesWritable(copied);
     if (existsSync(extracted)) makeBundleDirectoriesWritable(extracted);
     rmSync(root, { recursive: true, force: true });
   }
