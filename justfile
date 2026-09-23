@@ -6,6 +6,7 @@ test: check test-bun test-rpath-foreign test-preload-foreign test-preload-foreig
 
 # Build the foreign test binary (C binary with stripped RPATH)
 build-foreign:
+    mkdir -p {{ test_dir }}
     @if [ ! -f {{ foreign_bin }} ]; then \
         echo "==> Building foreign test binary..."; \
         gcc -o {{ foreign_bin }} test-foreign/test-foreign.c -ldl; \
