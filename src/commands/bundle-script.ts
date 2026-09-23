@@ -24,6 +24,7 @@ import {
   setPlaceholderInterpreter,
 } from "../lib/bundle-common.ts";
 import { CLEANUP_ENV_C } from "../lib/cleanup-env-source.ts";
+import { gatherDeps } from "../lib/gather-nix-deps.ts";
 import * as patchelf from "../lib/patchelf.ts";
 import { digest, type FileOrigins, recordFile, recordInclude } from "../lib/provenance.ts";
 import { resolveTool } from "../lib/resolve-tool.ts";
@@ -379,6 +380,27 @@ export function bundleScript(argv: string[]): void {
         };
         if (gccResult.exitCode !== 0) {
           throw new Error(`gcc failed: ${gccResult.stderr.toString().trim()}`);
+        }
+
+        // The generated preload library is loaded before the target. Its NEEDED
+        // entries are not part of the target binary's dependency graph.
+        const cleanupPath = `${outDir}/lib-${bin.name}/cleanup_env.so`;
+        const info = binaryInfos.find((item) => item.name === bin.name);
+        if (!info) throw new Error(`missing bundled binary info for ${bin.name}`);
+        const cleanupDeps = gatherDeps(cleanupPath, info.interpreterBasename, [], config.libPaths);
+        if (!cleanupDeps) {
+          throw new Error(
+            `could not resolve generated cleanup_env.so dependencies for ${bin.name}`,
+          );
+        }
+        for (const library of cleanupDeps.libs) {
+          const dest = `${outDir}/lib-${bin.name}/${basename(library)}`;
+          if (existsSync(dest)) continue;
+          copyFileSync(library, dest);
+          chmodSync(dest, 0o755);
+          patchelf.setRpath(dest, "$ORIGIN");
+          chmodSync(dest, 0o555);
+          recordFile(origins, `lib-${bin.name}/${basename(library)}`, library, ["set-rpath"]);
         }
       }
     }
