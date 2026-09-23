@@ -25,6 +25,7 @@ import {
 } from "../lib/bundle-common.ts";
 import { CLEANUP_ENV_C } from "../lib/cleanup-env-source.ts";
 import * as patchelf from "../lib/patchelf.ts";
+import { digest, type FileOrigins, recordFile, recordInclude } from "../lib/provenance.ts";
 import { resolveTool } from "../lib/resolve-tool.ts";
 import { generateScript } from "../lib/shell-template.ts";
 import type { BundleConfig, BundledBinaryInfo, ScriptBundleConfig } from "../lib/types.ts";
@@ -248,6 +249,7 @@ export function bundleScript(argv: string[]): void {
 
   try {
     const binaryInfos: BundledBinaryInfo[] = [];
+    const origins: FileOrigins = {};
 
     for (const bin of config.binaries) {
       log(`==> Processing binary: ${bin.name}`);
@@ -268,6 +270,24 @@ export function bundleScript(argv: string[]): void {
       };
 
       const deps = gatherAllDeps(binConfig, tmpdir);
+      recordFile(
+        origins,
+        `orig/${bin.name}`,
+        deps.effectiveTarget,
+        config.type === "rpath"
+          ? ["set-rpath", "set-interpreter-on-extraction"]
+          : ["set-interpreter-on-extraction"],
+      );
+      recordFile(origins, `lib-${bin.name}/${deps.interpreterBasename}`, deps.interpreterPath, []);
+      for (const library of deps.libs) {
+        if (library)
+          recordFile(
+            origins,
+            `lib-${bin.name}/${basename(library)}`,
+            library,
+            /^ld-linux/.test(basename(library)) ? [] : ["set-rpath"],
+          );
+      }
 
       if (config.type === "rpath") {
         // Copy and patch libs to lib-{name}/
@@ -352,6 +372,11 @@ export function bundleScript(argv: string[]): void {
           cleanupEnvSrc,
           "-ldl",
         ]);
+        origins[`lib-${bin.name}/cleanup_env.so`] = {
+          generatedFrom: "cleanup-env-source.ts",
+          sourceSha256: digest(CLEANUP_ENV_C),
+          changes: ["compile-shared-library"],
+        };
         if (gccResult.exitCode !== 0) {
           throw new Error(`gcc failed: ${gccResult.stderr.toString().trim()}`);
         }
@@ -361,9 +386,18 @@ export function bundleScript(argv: string[]): void {
     // Copy entry script
     copyFileSync(config.scriptPath, `${outDir}/entry.sh`);
     chmodSync(`${outDir}/entry.sh`, 0o755);
+    recordFile(origins, "entry.sh", config.scriptPath, []);
 
     // Copy includes
     copyIncludes(config.includes, outDir);
+    for (const include of config.includes) recordInclude(origins, include.dest, include.src);
+    if (existsSync(`${outDir}/nix-bundle-elf-manifest.json`)) {
+      throw new Error("include collides with nix-bundle-elf-manifest.json");
+    }
+    writeFileSync(
+      `${outDir}/nix-bundle-elf-manifest.json`,
+      `${JSON.stringify({ schemaVersion: 1, files: origins }, null, 2)}\n`,
+    );
 
     // Create tar.gz
     const tarPath = `${tmpdir}/bundle.tar.gz`;
