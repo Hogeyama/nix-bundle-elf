@@ -9,7 +9,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { basename } from "node:path";
-import { createTarGz } from "../lib/archive.ts";
+import { createTarGz, createZip } from "../lib/archive.ts";
 import {
   copyAndPatchLibs,
   copyIncludes,
@@ -124,8 +124,5 @@ function bundleLambda(
 
   // Create zip (strip .zip suffix if present — zip adds it automatically)
   const zipBase = output.replace(/\.zip$/, "");
-  const result = Bun.spawnSync(["zip", "-qr", zipBase, "."], { cwd: outDir });
-  if (result.exitCode !== 0) {
-    throw new Error(`zip failed: ${result.stderr.toString().trim()}`);
-  }
+  createZip(outDir, zipBase);
 }

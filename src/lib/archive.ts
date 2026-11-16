@@ -1,7 +1,16 @@
 // Archive helpers: tar.gz and zip creation.
 
-import { chmodSync, lstatSync, readdirSync } from "node:fs";
-import { join } from "node:path";
+import {
+  chmodSync,
+  cpSync,
+  lstatSync,
+  mkdtempSync,
+  readdirSync,
+  rmSync,
+  utimesSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 
 /** Ensure extracted bundle directories can be cleaned up by their owner. */
 export function makeBundleDirectoriesWritable(directory: string): void {
@@ -19,12 +28,77 @@ function spawnOrThrow(cmd: string[], errorPrefix: string): void {
   }
 }
 
-/** Create a tar.gz archive of the contents of srcDir. */
-export function createTarGz(srcDir: string, destPath: string): void {
-  spawnOrThrow(["tar", "-C", srcDir, "-czf", destPath, "."], "tar failed");
+/** Timestamp stamped on archive entries: SOURCE_DATE_EPOCH if set, else the Unix epoch. */
+function archiveEpoch(): string {
+  const env = process.env.SOURCE_DATE_EPOCH;
+  return env && /^\d+$/.test(env) ? env : "0";
 }
 
-/** Create a zip archive of the contents of srcDir. */
+/**
+ * Create a reproducible tar.gz archive of the contents of srcDir.
+ * Entry order, timestamps and ownership are normalized, and gzip omits its
+ * own name/mtime header, so identical inputs yield byte-identical archives.
+ */
+export function createTarGz(srcDir: string, destPath: string): void {
+  spawnOrThrow(
+    [
+      "tar",
+      "-C",
+      srcDir,
+      "--sort=name",
+      `--mtime=@${archiveEpoch()}`,
+      "--owner=0",
+      "--group=0",
+      "--numeric-owner",
+      "--format=gnu",
+      "--use-compress-program=gzip -n",
+      "-cf",
+      destPath,
+      ".",
+    ],
+    "tar failed",
+  );
+}
+
+/** Earliest timestamp a zip (MS-DOS) date can represent: 1980-01-01T00:00:00Z. */
+const ZIP_MIN_EPOCH = 315532800;
+
+/** List every path under root (relative, depth-first), sorted for a stable order. */
+function listTree(root: string, prefix = ""): string[] {
+  const out: string[] = [];
+  for (const entry of readdirSync(join(root, prefix)).sort()) {
+    const rel = prefix ? `${prefix}/${entry}` : entry;
+    out.push(rel);
+    if (lstatSync(join(root, rel)).isDirectory()) out.push(...listTree(root, rel));
+  }
+  return out;
+}
+
+/**
+ * Create a reproducible zip archive of the contents of srcDir.
+ * Symlinks are dereferenced (as `zip -r` would) into a staging copy so every
+ * entry's timestamp can be normalized; entries are added in sorted order
+ * without extra attributes (uid/gid, extended timestamps), and the DOS-local
+ * time is computed in UTC.
+ */
 export function createZip(srcDir: string, destPath: string): void {
-  spawnOrThrow(["zip", "-qr", destPath, "."], `zip failed (cwd: ${srcDir})`);
+  const dest = resolve(destPath);
+  const stage = mkdtempSync(join(Bun.env.TMPDIR ?? tmpdir(), "nix-bundle-elf-zip-"));
+  try {
+    cpSync(srcDir, stage, { recursive: true, dereference: true });
+    const epoch = Math.max(Number(archiveEpoch()), ZIP_MIN_EPOCH);
+    const entries = listTree(stage);
+    for (const rel of entries) utimesSync(join(stage, rel), epoch, epoch);
+    const result = Bun.spawnSync(["zip", "-q", "-X", "-@", dest], {
+      cwd: stage,
+      env: { ...process.env, TZ: "UTC" },
+      stdin: Buffer.from(entries.map((e) => `${e}\n`).join("")),
+    });
+    if (result.exitCode !== 0) {
+      throw new Error(`zip failed: ${result.stderr.toString().trim()}`);
+    }
+  } finally {
+    makeBundleDirectoriesWritable(stage);
+    rmSync(stage, { recursive: true, force: true });
+  }
 }

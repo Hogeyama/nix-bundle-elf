@@ -5,14 +5,73 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readFileSync,
   rmSync,
   statSync,
   symlinkSync,
+  utimesSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createTarGz, makeBundleDirectoriesWritable } from "./archive.ts";
+import { createTarGz, createZip, makeBundleDirectoriesWritable } from "./archive.ts";
+
+test("createTarGz is byte-identical regardless of mtime and creation order", () => {
+  const root = mkdtempSync(join(tmpdir(), "bundle-archive-"));
+  try {
+    const build = (dir: string, names: string[], mtime: number): Buffer => {
+      mkdirSync(join(root, dir, "lib"), { recursive: true });
+      for (const name of names) writeFileSync(join(root, dir, "lib", name), name);
+      for (const path of [...names.map((n) => join("lib", n)), "lib", "."])
+        utimesSync(join(root, dir, path), mtime, mtime);
+      const archive = join(root, `${dir}.tar.gz`);
+      createTarGz(join(root, dir), archive);
+      return readFileSync(archive);
+    };
+    const a = build("a", ["libx.so", "liba.so", "libm.so"], 1_000_000);
+    const b = build("b", ["libm.so", "libx.so", "liba.so"], 2_000_000);
+    expect(a.equals(b)).toBe(true);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test.skipIf(!Bun.which("zip"))(
+  "createZip is byte-identical regardless of mtime, creation order and symlink targets",
+  () => {
+    const root = mkdtempSync(join(tmpdir(), "bundle-archive-"));
+    try {
+      const build = (dir: string, names: string[], mtime: number): Buffer => {
+        mkdirSync(join(root, dir, "lib"), { recursive: true });
+        for (const name of names) writeFileSync(join(root, dir, "lib", name), name);
+        // A symlink leaving the tree: zip follows it and would record the target's mtime.
+        const outside = join(root, `${dir}-outside`);
+        writeFileSync(outside, "outside");
+        utimesSync(outside, mtime, mtime);
+        symlinkSync(outside, join(root, dir, "link"));
+        for (const path of [...names.map((n) => join("lib", n)), "lib", "."])
+          utimesSync(join(root, dir, path), mtime, mtime);
+        const archive = join(root, `${dir}.zip`);
+        createZip(join(root, dir), archive);
+        return readFileSync(archive);
+      };
+      const a = build("a", ["libx.so", "liba.so", "libm.so"], 1_000_000_000);
+      const b = build("b", ["libm.so", "libx.so", "liba.so"], 1_500_000_000);
+      expect(a.equals(b)).toBe(true);
+      const list = Bun.spawnSync(["unzip", "-Z1", join(root, "a.zip")]);
+      if (list.exitCode === 0)
+        expect(list.stdout.toString().trim().split("\n")).toEqual([
+          "lib/",
+          "lib/liba.so",
+          "lib/libm.so",
+          "lib/libx.so",
+          "link",
+        ]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  },
+);
 
 test("read-only copied assets extract into owner-writable directories for cleanup", () => {
   const root = mkdtempSync(join(tmpdir(), "bundle-archive-"));
