@@ -35,9 +35,23 @@ function archiveEpoch(): string {
 }
 
 /**
+ * Permission normalization applied to archive entries, independent of umask:
+ * group/other bits mirror the owner's minus write (rwx → 755, rw- → 644,
+ * r-x → 555), and setuid/setgid/sticky (e.g. inherited setgid dirs) are cleared.
+ */
+const TAR_MODE = "go=u,go-w,ug-s,-t";
+
+/** Numeric equivalent of TAR_MODE. */
+export function normalizeMode(mode: number): number {
+  const owner = (mode >> 6) & 0o7;
+  const rest = owner & 0o5;
+  return (owner << 6) | (rest << 3) | rest;
+}
+
+/**
  * Create a reproducible tar.gz archive of the contents of srcDir.
- * Entry order, timestamps and ownership are normalized, and gzip omits its
- * own name/mtime header, so identical inputs yield byte-identical archives.
+ * Entry order, timestamps, permissions and ownership are normalized, and gzip
+ * omits its own name/mtime header, so identical inputs yield byte-identical archives.
  */
 export function createTarGz(srcDir: string, destPath: string): void {
   spawnOrThrow(
@@ -50,6 +64,7 @@ export function createTarGz(srcDir: string, destPath: string): void {
       "--owner=0",
       "--group=0",
       "--numeric-owner",
+      `--mode=${TAR_MODE}`,
       "--format=gnu",
       "--use-compress-program=gzip -n",
       "-cf",
@@ -77,7 +92,7 @@ function listTree(root: string, prefix = ""): string[] {
 /**
  * Create a reproducible zip archive of the contents of srcDir.
  * Symlinks are dereferenced (as `zip -r` would) into a staging copy so every
- * entry's timestamp can be normalized; entries are added in sorted order
+ * entry's timestamp and permissions can be normalized; entries are added in sorted order
  * without extra attributes (uid/gid, extended timestamps), and the DOS-local
  * time is computed in UTC.
  */
@@ -88,7 +103,11 @@ export function createZip(srcDir: string, destPath: string): void {
     cpSync(srcDir, stage, { recursive: true, dereference: true });
     const epoch = Math.max(Number(archiveEpoch()), ZIP_MIN_EPOCH);
     const entries = listTree(stage);
-    for (const rel of entries) utimesSync(join(stage, rel), epoch, epoch);
+    for (const rel of entries) {
+      const path = join(stage, rel);
+      chmodSync(path, normalizeMode(lstatSync(path).mode));
+      utimesSync(path, epoch, epoch);
+    }
     const result = Bun.spawnSync(["zip", "-q", "-X", "-@", dest], {
       cwd: stage,
       env: { ...process.env, TZ: "UTC" },

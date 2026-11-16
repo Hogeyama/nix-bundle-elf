@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import {
   chmodSync,
   cpSync,
@@ -14,7 +14,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createTarGz, createZip, makeBundleDirectoriesWritable } from "./archive.ts";
+import { createTarGz, createZip, makeBundleDirectoriesWritable, normalizeMode } from "./archive.ts";
 
 test("createTarGz is byte-identical regardless of mtime and creation order", () => {
   const root = mkdtempSync(join(tmpdir(), "bundle-archive-"));
@@ -72,6 +72,47 @@ test.skipIf(!Bun.which("zip"))(
     }
   },
 );
+
+test("normalizeMode derives group/other from owner and drops special bits", () => {
+  expect(normalizeMode(0o40700)).toBe(0o755);
+  expect(normalizeMode(0o600)).toBe(0o644);
+  expect(normalizeMode(0o555)).toBe(0o555);
+  expect(normalizeMode(0o400)).toBe(0o444);
+  expect(normalizeMode(0o2775)).toBe(0o755);
+  expect(normalizeMode(0o4755)).toBe(0o755);
+});
+
+describe("archives do not depend on umask-derived permissions", () => {
+  // Same owner bits, different group/other bits and an inherited setgid dir.
+  const build = (root: string, dir: string, loose: boolean): string => {
+    const base = join(root, dir);
+    mkdirSync(join(base, "lib"), { recursive: true });
+    writeFileSync(join(base, "lib", "libx.so"), "x");
+    writeFileSync(join(base, "data"), "d");
+    chmodSync(join(base, "lib", "libx.so"), loose ? 0o775 : 0o700);
+    chmodSync(join(base, "data"), loose ? 0o664 : 0o600);
+    chmodSync(join(base, "lib"), loose ? 0o2775 : 0o700);
+    chmodSync(base, loose ? 0o775 : 0o700);
+    return base;
+  };
+  const cases: [string, (src: string, dest: string) => void, boolean][] = [
+    ["tar.gz", createTarGz, true],
+    ["zip", createZip, Boolean(Bun.which("zip"))],
+  ];
+  for (const [ext, create, available] of cases) {
+    test.skipIf(!available)(ext, () => {
+      const root = mkdtempSync(join(tmpdir(), "bundle-archive-"));
+      try {
+        const [a, b] = [build(root, "a", false), build(root, "b", true)];
+        create(a, `${a}.${ext}`);
+        create(b, `${b}.${ext}`);
+        expect(readFileSync(`${a}.${ext}`).equals(readFileSync(`${b}.${ext}`))).toBe(true);
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    });
+  }
+});
 
 test("read-only copied assets extract into owner-writable directories for cleanup", () => {
   const root = mkdtempSync(join(tmpdir(), "bundle-archive-"));
